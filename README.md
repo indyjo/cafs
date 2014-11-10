@@ -1,5 +1,6 @@
 cafs
 ====
+[![Build Status](https://travis-ci.org/indyjo/cafs.svg)](https://travis-ci.org/indyjo/cafs)
 
 Content-Addressable File System.
 
