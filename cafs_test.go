@@ -40,16 +40,16 @@ func TestLRU(t *testing.T) {
 	s := NewRamStorage(1000)
 	f1 := addData(t, s, 400)
 	f1.Dispose()
-	s.DumpStatistics(logPrinter{})
+	//s.DumpStatistics(logPrinter{})
 	f2 := addData(t, s, 350)
 	f2.Dispose()
-	s.DumpStatistics(logPrinter{})
+	//s.DumpStatistics(logPrinter{})
 	f3 := addData(t, s, 250)
 	f3.Dispose()
-	s.DumpStatistics(logPrinter{})
+	//s.DumpStatistics(logPrinter{})
 	f4 := addData(t, s, 450)
 	f4.Dispose()
-	s.DumpStatistics(logPrinter{})
+	//s.DumpStatistics(logPrinter{})
 	var key SKey
 	key = f1.Key()
 	if _, err := s.Get(&key); err != ErrNotFound {
@@ -72,7 +72,7 @@ func TestLRU(t *testing.T) {
 		f.Dispose()
 	}
 
-	s.DumpStatistics(logPrinter{})
+	//s.DumpStatistics(logPrinter{})
 
 	// Now f3 is youngest, then f4 (f1 and f2 are gone)
 	addData(t, s, 500).Dispose()
@@ -147,10 +147,10 @@ func TestCompression2(t *testing.T) {
 
 func TestRefCounting(t *testing.T) {
 	_s := NewRamStorage(80 * 1024)
-	s := _s.(*ramStorage)
+	//s := _s.(*ramStorage)
 	_f := addRandomData(t, _s, 60*1024)
 	f := _f.(*ramFile)
-	defer s.DumpStatistics(logPrinter{})
+	//defer s.DumpStatistics(logPrinter{})
 	if f.entry.refs != 1 {
 		t.Fatalf("Refs != 1 before dispose: %v", f.entry.refs)
 	}

@@ -30,7 +30,7 @@ func TestRemoteSync(t *testing.T) {
 	for _, p := range []float64{0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1} {
 		for _, nBlocks := range []int{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512} {
 			testWithParams(t, storeA, storeB, p, nBlocks)
-			storeA.DumpStatistics(logPrinter{})
+			//storeA.DumpStatistics(logPrinter{})
 		}
 	}
 }
