@@ -35,6 +35,10 @@ type byteReader struct {
 	buf [1]byte
 }
 
+// By passing a callback function to some of the transmissions functions,
+// the caller can subscribe to the current transmission status.
+type TransferStatusCallback func(bytesToTransfer, bytesTransferred uint64)
+
 func (r byteReader) ReadByte() (byte, error) {
 	_, err := r.r.Read(r.buf[:])
 	return r.buf[0], err
@@ -69,36 +73,69 @@ func WriteChunkHashes(file File, w io.Writer) error {
 
 // Writes a stream of chunk length / data pairs into an io.Writer, based on
 // the chunks of a file and a matching list of requested chunks.
-func WriteRequestedChunks(file File, wishList []byte, w io.Writer) error {
+func WriteRequestedChunks(file File, wishList []byte, w io.Writer, cb TransferStatusCallback) error {
 	if int64(len(wishList)) != (file.NumChunks()+7)/8 {
 		return errors.New("Illegal size of wishList")
 	}
-	var b byte
-	bit := 8
-	iter := file.Chunks()
-	defer iter.Dispose()
-	for iter.Next() {
-		if bit == 8 {
-			b = wishList[0]
-			wishList = wishList[1:]
-			bit = 0
-		}
-		if 0 != (b & 0x80) {
-			chunk := iter.File()
-			defer chunk.Dispose()
-			if err := writeVarint(w, chunk.Size()); err != nil {
-				return err
+
+	forEachRequestedChunk := func(f func(chunk File) error) error {
+		var b byte
+		bit := 8
+		iter := file.Chunks()
+		remainingWishList := wishList
+		defer iter.Dispose()
+
+		for iter.Next() {
+			if bit == 8 {
+				b = remainingWishList[0]
+				remainingWishList = remainingWishList[1:]
+				bit = 0
 			}
-			r := chunk.Open()
-			defer r.Close()
-			if _, err := io.Copy(w, r); err != nil {
-				return err
+			if 0 != (b & 0x80) {
+				chunk := iter.File()
+				defer chunk.Dispose()
+				if err := f(chunk); err != nil {
+					return err
+				}
 			}
+			b <<= 1
+			bit++
 		}
-		b <<= 1
-		bit++
+		return nil
 	}
-	return nil
+
+	// Determine the number of bytes to transmit by iterating over requested chunks
+	// and summing up their sizes
+	var bytesToTransfer uint64
+	if err := forEachRequestedChunk(func(chunk File) error {
+		bytesToTransfer += uint64(chunk.Size())
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if cb != nil {
+		cb(bytesToTransfer, 0)
+	}
+
+	// Iterate requested chunks. Write the chunk's length (as varint) and the chunk data
+	// into the output writer.
+	var bytesTransferred uint64
+	return forEachRequestedChunk(func(chunk File) error {
+		if err := writeVarint(w, chunk.Size()); err != nil {
+			return err
+		}
+		r := chunk.Open()
+		defer r.Close()
+		if n, err := io.Copy(w, r); err != nil {
+			return err
+		} else if cb != nil {
+			bytesTransferred += uint64(n)
+			// Notify callback of status
+			cb(bytesToTransfer, bytesTransferred)
+		}
+		return nil
+	})
 }
 
 type Builder struct {
