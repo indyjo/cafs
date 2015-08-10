@@ -326,7 +326,11 @@ func (f *ramFile) Open() io.ReadCloser {
 }
 
 func (f *ramFile) Size() int64 {
-	return int64(len(f.entry.data))
+	if f.entry.data != nil {
+		return int64(len(f.entry.data))
+	} else {
+		return f.entry.chunks[len(f.entry.chunks)-1].nextPos
+	}
 }
 
 func (f *ramFile) Dispose() {
