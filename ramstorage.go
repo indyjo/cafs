@@ -131,16 +131,32 @@ func (s *ramStorage) DumpStatistics(log Printer) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	link := func(k SKey, n int, local bool) string {
+		zero := SKey{}
+		if k == zero {
+			return fmt.Sprintf("%x", k[:n])
+		} else if local {
+			return fmt.Sprintf(`<a href="#%v">%x</a>`, k, k[:n])
+		} else {
+			return fmt.Sprintf(`<a href="/file/%v">%x</a>`, k, k[:n])
+		}
+	}
+
+	log.Printf("<html><head><title>CAFS Statistics</title></head><body><pre>")
 	log.Printf("Bytes used: %d, locked: %d, oldest: %x, youngest: %x", s.bytesUsed, s.bytesLocked, s.oldest[:4], s.youngest[:4])
 	for key, entry := range s.entries {
-		log.Printf("  [%x] refs=%d size=%v [%v] %x (older) %x (younger)", key[:4], entry.refs, entry.storageSize(), entry.info, entry.older[:4], entry.younger[:4])
+		log.Printf("<a name=\"%v\">  [%v] refs=%d size=%v [%v] %v (older) %v (younger)</a>",
+			key, link(key, 4, false), entry.refs, entry.storageSize(), entry.info,
+			link(entry.older, 4, true), link(entry.younger, 4, true))
 
 		prevPos := int64(0)
 		for i, chunk := range entry.chunks {
-			log.Printf("             chunk %4d: %x (length %6d, ends at %7d)", i, chunk.key[:4], chunk.nextPos-prevPos, chunk.nextPos)
+			log.Printf("             chunk %4d: %v (length %6d, ends at %7d)", i,
+				link(chunk.key, 4, true), chunk.nextPos-prevPos, chunk.nextPos)
 			prevPos = chunk.nextPos
 		}
 	}
+	log.Printf("</pre></body></html>")
 }
 
 func (s *ramStorage) reserveBytes(info string, numBytes int64) error {
