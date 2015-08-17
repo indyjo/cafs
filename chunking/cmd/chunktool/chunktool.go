@@ -8,12 +8,16 @@ import (
 	"github.com/indyjo/cafs/chunking"
 	"io"
 	"os"
+	"sort"
 )
 
 const APP_VERSION = "0.1"
 
 // The flag package provides a default help printer via -h switch
-var versionFlag *bool = flag.Bool("v", false, "Print the version number.")
+var versionFlag = flag.Bool("v", false, "Print the version number.")
+var numFingers = flag.Int("n", 5, "Number of fingers in handprint.")
+var matrixMode = flag.Bool("m", false, "Display similarity matrix.")
+var printChunks = flag.Bool("c", false, "Print chunks on the go.")
 
 func main() {
 	flag.Parse() // Scan the arguments list
@@ -22,9 +26,42 @@ func main() {
 		fmt.Println("Version:", APP_VERSION)
 	}
 
+	fingerprints := make(map[string]bool)
+
 	for _, arg := range flag.Args() {
-		if err := chunkFile(arg); err != nil {
+		if handprint, err := chunkFile(arg, *numFingers, !*matrixMode, *printChunks); err != nil {
 			fmt.Println("Failed: ", err)
+		} else {
+			for _, fingerprint := range handprint.Fingerprints {
+				fingerprints[fmt.Sprintf("%16x", fingerprint[:8])] = true
+			}
+		}
+	}
+
+	if *matrixMode {
+		allFingers := make([]string, 0, len(fingerprints))
+		for k, _ := range fingerprints {
+			allFingers = append(allFingers, k)
+		}
+		sort.Strings(allFingers)
+		for _, arg := range flag.Args() {
+			if handprint, err := chunkFile(arg, *numFingers, false, false); err != nil {
+				fmt.Println("Failed: ", err)
+			} else {
+				fingerprintsInHandprint := make(map[string]bool)
+				for _, fingerprint := range handprint.Fingerprints {
+					fingerprintsInHandprint[fmt.Sprintf("%16x", fingerprint[:8])] = true
+				}
+				row := make([]byte, 0, 32)
+				for _, fingerprint := range allFingers {
+					if _, ok := fingerprintsInHandprint[fingerprint]; ok {
+						row = append(row, '.')
+					} else {
+						row = append(row, ' ')
+					}
+				}
+				fmt.Printf("%s %s\n", row, arg)
+			}
 		}
 	}
 }
@@ -33,8 +70,8 @@ type Handprint struct {
 	Fingerprints [][]byte
 }
 
-func NewHandprint() *Handprint {
-	return &Handprint{make([][]byte, 0, 5)}
+func NewHandprint(size int) *Handprint {
+	return &Handprint{make([][]byte, 0, size)}
 }
 
 func (h *Handprint) String() string {
@@ -57,12 +94,12 @@ func (h *Handprint) Insert(fingerprint []byte) {
 	}
 }
 
-func chunkFile(filename string) error {
-	handprint := NewHandprint()
+func chunkFile(filename string, size int, printSummary, printChunks bool) (*Handprint, error) {
+	handprint := NewHandprint(size)
 	//fmt.Printf("Chunking %s\n", filename)
 	fi, err := os.Open(filename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer fi.Close()
 
@@ -76,7 +113,7 @@ func chunkFile(filename string) error {
 	for {
 		n, err := fi.Read(buffer)
 		if err != nil && err != io.EOF {
-			return err
+			return nil, err
 		}
 		if n == 0 {
 			handprint.Insert(sha.Sum(make([]byte, 0, 32)))
@@ -90,7 +127,9 @@ func chunkFile(filename string) error {
 			sha.Write(slice[:bytesInChunk])
 			if bytesInChunk < len(slice) {
 				handprint.Insert(sha.Sum(make([]byte, 0, 32)))
-				// fmt.Printf("%032x %d\n", shavalue, chunkLen)
+				if printChunks {
+					fmt.Printf(" %6d %032x\n", chunkLen, sha.Sum(make([]byte, 0, 32)))
+				}
 				sha.Reset()
 				chunkLen = 0
 				numChunks++
@@ -100,6 +139,8 @@ func chunkFile(filename string) error {
 	}
 
 	//fmt.Printf("Generated %d chunks on avg %d bytes long.\n", numChunks, numBytes/numChunks)
-	fmt.Printf("%-20s %s\n", handprint, filename)
-	return nil
+	if printSummary {
+		fmt.Printf("%-20s %s\n", handprint, filename)
+	}
+	return handprint, nil
 }
