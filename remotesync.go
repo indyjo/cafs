@@ -156,15 +156,18 @@ func NewBuilder(storage FileStorage, r io.Reader, info string) (*Builder, error)
 	var lastPos int64
 	found := make(map[SKey]File)
 	missing := make(map[SKey]bool)
+	statusError := func(msg string, err error) error {
+		return fmt.Errorf("Error %v after reading %v bytes, %v hashes: %v", msg, lastPos, len(chunks), err)
+	}
 	for {
 		if _, err := io.ReadFull(r, key[:]); err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, err
+			return nil, statusError("reading chunk hash", err)
 		}
 		var length int64
 		if l, err := readVarint(r); err != nil {
-			return nil, err
+			return nil, statusError("reading length of chunk", err)
 		} else {
 			length = l
 		}
