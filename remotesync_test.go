@@ -67,7 +67,7 @@ func testWithParams(t *testing.T, storeA, storeB FileStorage, p float64, nBlocks
 	t.Logf("Wishlist: %x", buf.Bytes())
 
 	buf2 := bytes.NewBuffer(nil)
-	if err := WriteRequestedChunks(fileA, buf.Bytes(), buf2); err != nil {
+	if err := WriteRequestedChunks(fileA, buf.Bytes(), buf2, nil); err != nil {
 		t.Fatalf("Error encoding requested chunks: %v", err)
 	}
 
