@@ -40,7 +40,7 @@ type byteReader struct {
 type TransferStatusCallback func(bytesToTransfer, bytesTransferred uint64)
 
 func (r byteReader) ReadByte() (byte, error) {
-	_, err := r.r.Read(r.buf[:])
+	_, err := io.ReadFull(r.r, r.buf[:])
 	return r.buf[0], err
 }
 

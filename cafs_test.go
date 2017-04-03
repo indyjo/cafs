@@ -2,6 +2,7 @@ package cafs
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"testing"
 )
@@ -136,7 +137,7 @@ func TestCompression2(t *testing.T) {
 	w := f.Open()
 	data2 := make([]byte, 1)
 	for i := 0; i < times*cycle; i++ {
-		if n, err := w.Read(data2); err != nil || n != 1 {
+		if n, err := io.ReadFull(w, data2); err != nil || n != 1 {
 			t.Fatalf("Error on Read: %v (n=%d)", err, n)
 		}
 		if data2[0] != data[i%cycle] {
