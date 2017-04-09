@@ -1,5 +1,5 @@
 //  BitWrk - A Bitcoin-friendly, anonymous marketplace for computing power
-//  Copyright (C) 2013  Jonas Eschenburg <jonas@bitwrk.net>
+//  Copyright (C) 2013-2017  Jonas Eschenburg <jonas@bitwrk.net>
 //
 //  This program is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -291,6 +291,7 @@ func (s *ramStorage) releaseL(key *SKey, entry *ramEntry) {
 	s.release(key, entry)
 }
 
+// Dereferences a single entry. Must happen while mutex is held.
 func (s *ramStorage) release(key *SKey, entry *ramEntry) {
 	if entry.refs == 0 {
 		panic(fmt.Sprintf("Can't release entry %v with 0 references", key))
@@ -641,22 +642,7 @@ func (t *ramTemporary) Dispose() {
 		return
 	}
 
-	// dereference single-chunk entry if successfully closed
-	if !t.open && t.valid {
-		var key SKey
-		t.fileHash.Sum(key[:0])
-		t.storage.releaseL(&key, t.storage.entries[key])
-	} else {
-		// dereference all locked chunks otherwise
-		// (they have been locked once just by storing them)
-		func() {
-			t.storage.mutex.Lock()
-			defer t.storage.mutex.Unlock()
-			for _, chunk := range t.chunks {
-				t.storage.release(&chunk.key, t.storage.entries[chunk.key])
-			}
-		}()
-	}
+	t.releaseFromStorage()
 
 	t.valid = false
 	wasOpen := t.open
@@ -669,6 +655,25 @@ func (t *ramTemporary) Dispose() {
 			log.Printf("[%v] Temporary canceled", t.info)
 		} else {
 			log.Printf("[%v] Temporary disposed", t.info)
+		}
+	}
+}
+
+// Calls release() on all chunks locked by this temporary.
+func (t *ramTemporary) releaseFromStorage() {
+	t.storage.mutex.Lock()
+	defer t.storage.mutex.Unlock()
+
+	// dereference single-chunk entry if successfully closed
+	if !t.open && t.valid {
+		var key SKey
+		t.fileHash.Sum(key[:0])
+		t.storage.release(&key, t.storage.entries[key])
+	} else {
+		// dereference all locked chunks otherwise
+		// (they have been locked once just by storing them)
+		for _, chunk := range t.chunks {
+			t.storage.release(&chunk.key, t.storage.entries[chunk.key])
 		}
 	}
 }
