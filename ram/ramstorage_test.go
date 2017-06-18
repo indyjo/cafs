@@ -1,7 +1,8 @@
-package cafs
+package ram
 
 import (
 	"fmt"
+	. "github.com/indyjo/cafs"
 	"io"
 	"math/rand"
 	"testing"

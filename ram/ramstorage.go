@@ -16,13 +16,13 @@
 
 // This package implements a content-addressable file storage that keeps its
 // data in RAM.
-
-package cafs
+package ram
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	. "github.com/indyjo/cafs"
 	"github.com/indyjo/cafs/chunking"
 	"hash"
 	"io"

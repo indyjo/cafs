@@ -14,19 +14,19 @@
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// Implements a differential file synching mechanism based on the content-based chunking
+// Package remotesync implements a differential file synching mechanism based on the content-based chunking
 // that is used by CAFS internally.
 // Step 1: Sender lists hashes of chunks of file to transmit (32 byte + ~2.5 bytes for length per chunk)
 // Step 2: Receiver lists missing chunks (one bit per chunk)
 // Step 3: Sender sends content of missing chunks
-
-package cafs
+package remotesync
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/indyjo/cafs/chunking"
+	"github.com/indyjo/cafs"
+	"github.com/indyjo/cafs/chunking/adler32"
 	"io"
 )
 
@@ -54,9 +54,15 @@ func writeVarint(w io.Writer, value int64) error {
 	return err
 }
 
+type chunkRef struct {
+	key cafs.SKey
+	// Points to the byte position within the file immediately after this chunk
+	nextPos int64
+}
+
 // Writes a stream of chunk hash/length pairs into an io.Writer. Length is encoded
 // as Varint.
-func WriteChunkHashes(file File, w io.Writer) error {
+func WriteChunkHashes(file cafs.File, w io.Writer) error {
 	chunks := file.Chunks()
 	defer chunks.Dispose()
 	for chunks.Next() {
@@ -73,12 +79,12 @@ func WriteChunkHashes(file File, w io.Writer) error {
 
 // Writes a stream of chunk length / data pairs into an io.Writer, based on
 // the chunks of a file and a matching list of requested chunks.
-func WriteRequestedChunks(file File, wishList []byte, w io.Writer, cb TransferStatusCallback) error {
+func WriteRequestedChunks(file cafs.File, wishList []byte, w io.Writer, cb TransferStatusCallback) error {
 	if int64(len(wishList)) != (file.NumChunks()+7)/8 {
 		return errors.New("Illegal size of wishList")
 	}
 
-	forEachRequestedChunk := func(f func(chunk File) error) error {
+	forEachRequestedChunk := func(f func(chunk cafs.File) error) error {
 		var b byte
 		bit := 8
 		iter := file.Chunks()
@@ -107,7 +113,7 @@ func WriteRequestedChunks(file File, wishList []byte, w io.Writer, cb TransferSt
 	// Determine the number of bytes to transmit by iterating over requested chunks
 	// and summing up their sizes
 	var bytesToTransfer uint64
-	if err := forEachRequestedChunk(func(chunk File) error {
+	if err := forEachRequestedChunk(func(chunk cafs.File) error {
 		bytesToTransfer += uint64(chunk.Size())
 		return nil
 	}); err != nil {
@@ -121,7 +127,7 @@ func WriteRequestedChunks(file File, wishList []byte, w io.Writer, cb TransferSt
 	// Iterate requested chunks. Write the chunk's length (as varint) and the chunk data
 	// into the output writer.
 	var bytesTransferred uint64
-	return forEachRequestedChunk(func(chunk File) error {
+	return forEachRequestedChunk(func(chunk cafs.File) error {
 		if err := writeVarint(w, chunk.Size()); err != nil {
 			return err
 		}
@@ -139,10 +145,10 @@ func WriteRequestedChunks(file File, wishList []byte, w io.Writer, cb TransferSt
 }
 
 type Builder struct {
-	storage       FileStorage
+	storage       cafs.FileStorage
 	chunks        []chunkRef
 	chunksWritten int
-	found         map[SKey]File
+	found         map[cafs.SKey]cafs.File
 	disposed      bool
 	info          string
 }
@@ -150,12 +156,12 @@ type Builder struct {
 // Reads a byte sequence encoded with EncodeChunkHashes and returns a new builder.
 // The builder can then output a list of chunks that are missing in the local storage
 // for complete reconstruction of the file.
-func NewBuilder(storage FileStorage, r io.Reader, info string) (*Builder, error) {
+func NewBuilder(storage cafs.FileStorage, r io.Reader, info string) (*Builder, error) {
 	chunks := make([]chunkRef, 0, 1024)
-	var key SKey
+	var key cafs.SKey
 	var lastPos int64
-	found := make(map[SKey]File)
-	missing := make(map[SKey]bool)
+	found := make(map[cafs.SKey]cafs.File)
+	missing := make(map[cafs.SKey]bool)
 	statusError := func(msg string, err error) error {
 		return fmt.Errorf("Error %v after reading %v bytes, %v hashes: %v", msg, lastPos, len(chunks), err)
 	}
@@ -211,7 +217,7 @@ func (b *Builder) checkValid() {
 func (b *Builder) WriteWishList(w io.Writer) error {
 	b.checkValid()
 	var buf [1]byte
-	requested := make(map[SKey]bool)
+	requested := make(map[cafs.SKey]bool)
 	for idx, chunk := range b.chunks {
 		if _, ok := b.found[chunk.key]; !ok && !requested[chunk.key] {
 			// chunk is missing and not already requested -> request it
@@ -242,19 +248,19 @@ func (b *Builder) WriteWishList(w io.Writer) error {
 
 // A datastructure to buffer the chunks sent up to a certain number
 type chunkBuffer struct {
-	chunks map[SKey]*chunkBufferEntry
+	chunks map[cafs.SKey]*chunkBufferEntry
 	avail  int
 }
 type chunkBufferEntry struct {
-	chunk File
+	chunk cafs.File
 	count int
 }
 
 func newChunkBuffer(avail int) *chunkBuffer {
-	return &chunkBuffer{make(map[SKey]*chunkBufferEntry), avail}
+	return &chunkBuffer{make(map[cafs.SKey]*chunkBufferEntry), avail}
 }
 func (b *chunkBuffer) isFull() bool { return b.avail <= 0 }
-func (b *chunkBuffer) push(file File) {
+func (b *chunkBuffer) push(file cafs.File) {
 	entry := b.chunks[file.Key()]
 	if entry == nil {
 		entry = &chunkBufferEntry{file, 0}
@@ -263,7 +269,7 @@ func (b *chunkBuffer) push(file File) {
 	entry.count++
 	b.avail--
 }
-func (b *chunkBuffer) pop(key SKey) {
+func (b *chunkBuffer) pop(key cafs.SKey) {
 	entry := b.chunks[key]
 	if entry == nil {
 		return
@@ -285,7 +291,7 @@ func (b *chunkBuffer) dispose() {
 // Reads a sequence of length-prefixed data chunks and tries to reconstruct a file from that
 // information. By using a 16-chunk buffer lookahead, we try to be a little bit flexible
 // with regard to the exact sequence of chunks.
-func (b *Builder) ReconstructFileFromRequestedChunks(r io.Reader) (File, error) {
+func (b *Builder) ReconstructFileFromRequestedChunks(r io.Reader) (cafs.File, error) {
 	b.checkValid()
 	// Counts the number of not immediately helpful chunks received to avoid being spammed.
 	buffer := newChunkBuffer(16)
@@ -339,7 +345,7 @@ func (b *Builder) ReconstructFileFromRequestedChunks(r io.Reader) (File, error) 
 	return temp.File(), nil
 }
 
-func appendChunk(temp Temporary, chunk File) error {
+func appendChunk(temp cafs.Temporary, chunk cafs.File) error {
 	r := chunk.Open()
 	defer r.Close()
 	if _, err := io.Copy(temp, r); err != nil {
@@ -348,14 +354,14 @@ func appendChunk(temp Temporary, chunk File) error {
 	return nil
 }
 
-func readChunk(s FileStorage, r io.Reader, info string) (File, error) {
+func readChunk(s cafs.FileStorage, r io.Reader, info string) (cafs.File, error) {
 	var length int64
 	if n, err := readVarint(r); err != nil {
 		return nil, err
 	} else {
 		length = n
 	}
-	if length < chunking.MIN_CHUNK || length > chunking.MAX_CHUNK {
+	if length < adler32.MIN_CHUNK || length > adler32.MAX_CHUNK {
 		return nil, errors.New("Invalid chunk length")
 	}
 	tempChunk := s.Create(info)

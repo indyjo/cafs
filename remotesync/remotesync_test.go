@@ -1,8 +1,10 @@
-package cafs
+package remotesync
 
 import (
 	"bytes"
 	"fmt"
+	. "github.com/indyjo/cafs"
+	. "github.com/indyjo/cafs/ram"
 	"io"
 	"math/rand"
 	"testing"

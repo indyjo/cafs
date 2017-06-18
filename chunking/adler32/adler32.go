@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package adler32 implements the Adler-32 checksum.
+// Package adler32 implements a chunker based on the Adler-32 checksum.
 //
-// It is defined in RFC 1950:
+// This package is based on Go's original package "hash/adler32" adapted
+// to support using Adler-32 as a chunking algorithm.
+//
+// Adler-32 is defined in RFC 1950:
 //	Adler-32 is composed of two sums accumulated per byte: s1 is
 //	the sum of all bytes, s2 is the sum of all s1 values. Both sums
 //	are done modulo 65521. s1 is initialized to 1, s2 to zero.  The
 //	Adler-32 checksum is stored as s2*65536 + s1 in most-
 //	significant-byte first (network) order.
-package chunking
+package adler32
 
 const (
 	// mod is the largest prime that is less than 65536.
@@ -29,19 +32,20 @@ const (
 	MAX_CHUNK   = 131072
 )
 
-type adlerChunker struct {
+// type Adler32Chunker implements the Chunker interface based on the Adler-32 checksum.
+type Adler32Chunker struct {
 	a      uint32
 	n, p   int
 	window [WINDOW_SIZE]byte
 }
 
-// New returns a new hash.Hash32 computing the Adler-32 checksum.
-func New() Chunker {
-	var c = adlerChunker{a: 1}
+// Function NewChunker returns a new Chunker.
+func NewChunker() *Adler32Chunker {
+	var c = Adler32Chunker{a: 1}
 	return &c
 }
 
-func (c *adlerChunker) Scan(data []byte) int {
+func (c *Adler32Chunker) Scan(data []byte) int {
 	if len(data) == 0 {
 		return 0
 	}
@@ -70,10 +74,10 @@ func (c *adlerChunker) Scan(data []byte) int {
 		c.n++
 
 		// Chunk boundary at MAX_CHUNK or if hash is 4159 modulo 8191 (both are prime)
-		if c.n > MIN_CHUNK && 4159 == (c.a % 8191) || c.n > MAX_CHUNK {
+		if c.n > MIN_CHUNK && 4159 == (c.a%8191) || c.n > MAX_CHUNK {
 			// Reset chunker and return position in data
-			*c = adlerChunker{a: 1}
-			return i+prefixLen // Byte will become beginning of next segment
+			*c = Adler32Chunker{a: 1}
+			return i + prefixLen // Byte will become beginning of next segment
 		}
 
 		c.p++

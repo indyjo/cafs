@@ -28,7 +28,7 @@ func TestChunker(t *testing.T) {
 
 func TestSingleByteBlocks(t *testing.T) {
 	size := (1 << 17) * 10000
-	chunker := &adlerChunker{a: 1}
+	chunker := New()
 	blocks := 0
 	r := rand.New(rand.NewSource(0))
 	for i := 0; i < size; i++ {
@@ -42,7 +42,7 @@ func TestSingleByteBlocks(t *testing.T) {
 		size--
 	}
 	blocks += 1
-	if blocks <= size / (1<<17) {
+	if blocks <= size/(1<<17) {
 		t.Errorf("Test produced only %v blocks -> no chunk boundaries found", blocks)
 	} else {
 		t.Logf("Test produced %v blocks (avg size: %d)", blocks, size/blocks)
