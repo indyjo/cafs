@@ -153,48 +153,18 @@ type Builder struct {
 	info          string
 }
 
-// Reads a byte sequence encoded with EncodeChunkHashes and returns a new builder.
-// The builder can then output a list of chunks that are missing in the local storage
+// Returns a new builder for reconstructing a file. Must eventually be disposed.
+// The builder can then proceed reading a byte sequence encoded with EncodeChunkHashesoutput a list of chunks that are missing in the local storage
 // for complete reconstruction of the file.
-func NewBuilder(storage cafs.FileStorage, r io.Reader, info string) (*Builder, error) {
-	chunks := make([]chunkRef, 0, 1024)
-	var key cafs.SKey
-	var lastPos int64
-	found := make(map[cafs.SKey]cafs.File)
-	missing := make(map[cafs.SKey]bool)
-	statusError := func(msg string, err error) error {
-		return fmt.Errorf("Error %v after reading %v bytes, %v hashes: %v", msg, lastPos, len(chunks), err)
-	}
-	for {
-		if _, err := io.ReadFull(r, key[:]); err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, statusError("reading chunk hash", err)
-		}
-		var length int64
-		if l, err := readVarint(r); err != nil {
-			return nil, statusError("reading length of chunk", err)
-		} else {
-			length = l
-		}
-		lastPos += length
-		chunks = append(chunks, chunkRef{key, lastPos})
-		if file, err := storage.Get(&key); err != nil {
-			missing[key] = true
-		} else {
-			found[key] = file
-		}
-	}
-	result := &Builder{
+func NewBuilder(storage cafs.FileStorage, info string) *Builder {
+	return &Builder{
 		storage:       storage,
-		chunks:        chunks,
+		chunks:        make([]chunkRef, 0, 1024),
 		chunksWritten: 0,
-		found:         found,
+		found:         make(map[cafs.SKey]cafs.File),
 		disposed:      false,
 		info:          info,
 	}
-
-	return result, nil
 }
 
 func (b *Builder) Dispose() {
@@ -212,17 +182,58 @@ func (b *Builder) checkValid() {
 	}
 }
 
-// Outputs a bit stream with '1' for each missing chunk, and
-// '0' for each chunk that is already available.
-func (b *Builder) WriteWishList(w io.Writer) error {
+// Reads a byte sequence encoded with EncodeChunkHashes and
+// outputs a bit stream with '1' for each missing chunk, and
+// '0' for each chunk that is already available or already requested.
+func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
 	b.checkValid()
 	var buf [1]byte
 	requested := make(map[cafs.SKey]bool)
-	for idx, chunk := range b.chunks {
-		if _, ok := b.found[chunk.key]; !ok && !requested[chunk.key] {
+	idx := 0
+	var lastPos int64
+
+	// Utility closure for creating informative error messages
+	statusError := func(msg string, err error) error {
+		return fmt.Errorf("Error %v after successfully reading %v chunks hashes up to byte position %v: %v",
+			msg, idx, lastPos, err)
+	}
+
+	for {
+		// Read a chunk hash and its length
+		var key cafs.SKey
+		if _, err := io.ReadFull(r, key[:]); err == io.EOF {
+			break
+		} else if err != nil {
+			return statusError("reading chunk hash", err)
+		}
+		var length int64
+		if l, err := readVarint(r); err != nil {
+			return statusError("reading length of chunk", err)
+		} else {
+			length = l
+		}
+
+		lastPos += length
+		b.chunks = append(b.chunks, chunkRef{key, lastPos})
+
+		var request bool
+		if requested[key] {
+			// This key was already requested
+			request = false
+		} else if file, err := b.storage.Get(&key); err != nil {
+			// File was not found in storage -> request and remember
+			request = true
+			requested[key] = true
+		} else {
+			// File was already in storage -> remember
+			b.found[key] = file
+			request = false
+			requested[key] = true
+		}
+
+		if request {
 			// chunk is missing and not already requested -> request it
 			buf[0] = (buf[0] << 1) | 1
-			requested[chunk.key] = true
 		} else {
 			// chunk either found or already requested
 			buf[0] = (buf[0] << 1) | 0
@@ -234,6 +245,8 @@ func (b *Builder) WriteWishList(w io.Writer) error {
 			}
 			buf[0] = 0
 		}
+
+		idx++
 	}
 	// Flush final byte
 	if (len(b.chunks) & 7) != 0 {

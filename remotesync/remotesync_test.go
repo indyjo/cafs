@@ -54,15 +54,15 @@ func testWithParams(t *testing.T, storeA, storeB FileStorage, p float64, nBlocks
 	fileA := tempA.File()
 	defer fileA.Dispose()
 
-	// task: transfer file A to storage B
-	buf := bytes.NewBuffer(nil)
-	WriteChunkHashes(fileA, buf)
-
-	builder, _ := NewBuilder(storeB, buf, fmt.Sprintf("Recovered A(%.2f,%d)", p, nBlocks))
+	builder := NewBuilder(storeB, fmt.Sprintf("Recovered A(%.2f,%d)", p, nBlocks))
 	defer builder.Dispose()
 
-	buf.Reset()
-	if err := builder.WriteWishList(buf); err != nil {
+	// task: transfer file A to storage B
+	pipeReader, pipeWriter := io.Pipe()
+
+	go WriteChunkHashes(fileA, pipeWriter)
+	buf := bytes.NewBuffer(nil)
+	if err := builder.WriteWishList(pipeReader, buf); err != nil {
 		t.Fatalf("Error generating wishlist: %v", err)
 	}
 
