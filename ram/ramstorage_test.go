@@ -31,6 +31,24 @@ func TestSame(t *testing.T) {
 	}
 }
 
+func TestEmptyFile(t *testing.T) {
+	s := NewRamStorage(1000)
+	f := addData(t, s, 0)
+	if f.Size() != 0 {
+		t.FailNow()
+	}
+	iter := f.Chunks()
+	if !iter.Next() {
+		t.Fatal("Expected empty file to have at least one chunk")
+	}
+	if iter.Key().String() != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Fatalf("Unexpected key of empty chunk: %v", iter.Key())
+	}
+	if iter.Next() {
+		t.Fatal("Expected empty file to not have any further chunks")
+	}
+}
+
 type logPrinter struct {
 }
 
