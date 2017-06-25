@@ -179,11 +179,10 @@ type chunk struct {
 }
 
 type Builder struct {
-	done     chan struct{}
-	storage  cafs.FileStorage
-	chunks   chan chunk
-	disposed bool
-	info     string
+	done    chan struct{}
+	storage cafs.FileStorage
+	chunks  chan chunk
+	info    string
 }
 
 // Returns a new receiver for reconstructing a file. Must eventually be disposed.
@@ -192,35 +191,27 @@ type Builder struct {
 // for complete reconstruction of the file.
 func NewBuilder(storage cafs.FileStorage, windowSize int, info string) *Builder {
 	return &Builder{
-		done:     make(chan struct{}),
-		storage:  storage,
-		chunks:   make(chan chunk, windowSize),
-		disposed: false,
-		info:     info,
+		done:    make(chan struct{}),
+		storage: storage,
+		chunks:  make(chan chunk, windowSize),
+		info:    info,
 	}
 }
 
+// Disposes the receiver. Must be called exactly once per receiver. May cause the goroutines running
+// WriteWishList and ReconstructFileFromRequestedChunks to terminate with error ErrDisposed.
 func (b *Builder) Dispose() {
-	if !b.disposed {
-		b.disposed = true
-		close(b.done)
-	drain:
-		for {
-			select {
-			case chunk := <-b.chunks:
-				if chunk.length == 0 {
-					break drain
-				} else if chunk.file != nil {
-					chunk.file.Dispose()
-				}
+	close(b.done)
+drain:
+	for {
+		select {
+		case chunk := <-b.chunks:
+			if chunk.length == 0 {
+				break drain
+			} else if chunk.file != nil {
+				chunk.file.Dispose()
 			}
 		}
-	}
-}
-
-func (b *Builder) checkValid() {
-	if b.disposed {
-		panic(ErrDisposed)
 	}
 }
 
@@ -259,8 +250,6 @@ func (w *bitWriter) Flush() (err error) {
 // outputs a bit stream with '1' for each missing chunk, and
 // '0' for each chunk that is already available or already requested.
 func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
-	b.checkValid()
-
 	if LoggingEnabled {
 		log.Printf("Receiver: Begin WriteWishList")
 		defer log.Printf("Receiver: End WriteWishList")
@@ -315,7 +304,13 @@ func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
 			requested[key] = true
 		}
 
-		b.chunks <- chunk
+		// Write chunk info into channel. This migh block if channel buffer is full.
+		// Only wait until disposed.
+		select {
+		case b.chunks <- chunk:
+		case <-b.done:
+			return ErrDisposed
+		}
 
 		if err := bitWriter.WriteBit(chunk.requested); err != nil {
 			return err
@@ -329,8 +324,6 @@ func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
 // Reads a sequence of length-prefixed data chunks and tries to reconstruct a file from that
 // information.
 func (b *Builder) ReconstructFileFromRequestedChunks(r io.Reader) (cafs.File, error) {
-	b.checkValid()
-
 	if LoggingEnabled {
 		log.Printf("Receiver: Begin ReconstructFileFromRequestedChunks")
 		defer log.Printf("Receiver: End ReconstructFileFromRequestedChunks")
