@@ -45,6 +45,17 @@ func check(t *testing.T, msg string, err error) {
 	}
 }
 
+type flushWriter struct {
+	w io.Writer
+}
+
+func (w flushWriter) Write(buf []byte) (int, error) {
+	return w.w.Write(buf)
+}
+
+func (w flushWriter) Flush() {
+}
+
 func testWithParams(t *testing.T, storeA, storeB cafs.FileStorage, p, sigma float64, nBlocks int) {
 	t.Logf("Testing with params: p=%f, nBlocks=%d", p, nBlocks)
 	tempA := storeA.Create(fmt.Sprintf("Data A(%.2f,%d)", p, nBlocks))
@@ -78,7 +89,7 @@ func testWithParams(t *testing.T, storeA, storeB cafs.FileStorage, p, sigma floa
 		}
 	}()
 	go func() {
-		if err := builder.WriteWishList(pipeReader1, pipeWriter2); err != nil {
+		if err := builder.WriteWishList(pipeReader1, flushWriter{pipeWriter2}); err != nil {
 			pipeWriter2.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
 		} else {
 			pipeWriter2.Close()

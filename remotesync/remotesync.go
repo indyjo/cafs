@@ -47,6 +47,12 @@ type byteReader struct {
 // the caller can subscribe to the current transmission status.
 type TransferStatusCallback func(bytesToTransfer, bytesTransferred int64)
 
+// Interface FlushWriter acts like an io.Writer with an additional Flush method.
+type FlushWriter interface {
+	io.Writer
+	Flush()
+}
+
 func (r byteReader) ReadByte() (byte, error) {
 	_, err := io.ReadFull(r.r, r.buf[:])
 	return r.buf[0], err
@@ -216,12 +222,12 @@ drain:
 }
 
 type bitWriter struct {
-	w   io.Writer
+	w   FlushWriter
 	n   int
 	buf [1]byte
 }
 
-func NewBitWriter(writer io.Writer) *bitWriter {
+func NewBitWriter(writer FlushWriter) *bitWriter {
 	return &bitWriter{w: writer}
 }
 
@@ -234,6 +240,9 @@ func (w *bitWriter) WriteBit(b bool) (err error) {
 	w.n++
 	if w.n == 8 {
 		_, err = w.w.Write(w.buf[:])
+		if err == nil {
+			w.w.Flush()
+		}
 		w.n = 0
 	}
 	return
@@ -249,7 +258,7 @@ func (w *bitWriter) Flush() (err error) {
 // Reads a byte sequence encoded with EncodeChunkHashes and
 // outputs a bit stream with '1' for each missing chunk, and
 // '0' for each chunk that is already available or already requested.
-func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
+func (b *Builder) WriteWishList(r io.Reader, w FlushWriter) error {
 	if LoggingEnabled {
 		log.Printf("Receiver: Begin WriteWishList")
 		defer log.Printf("Receiver: End WriteWishList")
@@ -304,7 +313,7 @@ func (b *Builder) WriteWishList(r io.Reader, w io.Writer) error {
 			requested[key] = true
 		}
 
-		// Write chunk info into channel. This migh block if channel buffer is full.
+		// Write chunk info into channel. This might block if channel buffer is full.
 		// Only wait until disposed.
 		select {
 		case b.chunks <- chunk:
