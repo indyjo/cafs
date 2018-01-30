@@ -323,8 +323,12 @@ func (s *ramStorage) release(key *SKey, entry *ramEntry) {
 	}
 }
 
+// These are only estimates. Even an empty file consumes storage.
+const entrySize = 112
+const chunkSize = 40
+
 func (e *ramEntry) storageSize() int64 {
-	return int64(len(e.data) + 40*len(e.chunks))
+	return int64(entrySize + len(e.data) + chunkSize*len(e.chunks))
 }
 
 func (f *ramFile) Key() SKey {
