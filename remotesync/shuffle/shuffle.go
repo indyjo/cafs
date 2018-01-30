@@ -41,9 +41,9 @@ type Shuffler struct {
 // Interface StreamShuffler is common for shufflers and unshufflers working on a
 // stream with a well-defined beginning and end.
 type StreamShuffler interface {
-	// Puts one data element into the StreamShuffler. Calls the ConsumeFunc zero or one times.
+	// Puts one data element into the StreamShuffler. Calls the ConsumeFunc exactly once.
 	Put(interface{}) error
-	// Feeds remaining data from the buffer into the ConsumeFunc, calling it 0 to k times.
+	// Feeds remaining data from the buffer into the ConsumeFunc, calling it k-1 times.
 	End() error
 	// Returns a shallow copy of this StreamShuffler with a different ConsumeFunc.
 	WithFunc(consume ConsumeFunc) StreamShuffler
@@ -53,18 +53,16 @@ type StreamShuffler interface {
 // arbitrary type and returns an error.
 type ConsumeFunc func(interface{}) error
 
+// Functions of type applyFunc are used internally to apply a value returned from
+// the shuffler to a ConsumeFunc. This is necessary because shuffling and unshuffling
+// are not fully symmetric and require the substitution or removal of placeholder values.
+type applyFunc func(ConsumeFunc, interface{}) error
+
 // Type streamShuffler uses a Shuffler to permute a sequence of arbitrary length.
 type streamShuffler struct {
 	consume ConsumeFunc
 	forward *Shuffler
-}
-
-// Type streamUnshuffler uses a Shuffler to restore the order of elements in a
-// sequence of arbitrary length that was created using StreamShuffler.
-type streamUnshuffler struct {
-	consume ConsumeFunc
-	forward *Shuffler
-	inverse *Shuffler
+	apply   applyFunc
 }
 
 // Creates a random permutation of given length.
@@ -75,7 +73,7 @@ func Random(size int, r *rand.Rand) Permutation {
 // Given a permutation p, creates a complimentary permutation p'
 // such that using the output of a Shuffler based on p as the input
 // of a Shuffler based on p' restores the original stream order
-// delayed by p.Size() steps.
+// delayed by len(p) - 1 steps.
 func (p Permutation) Inverse() Permutation {
 	inv := make(Permutation, len(p))
 	for i, j := range p {
@@ -116,30 +114,31 @@ func (s *Shuffler) Length() int {
 	return len(s.buffer)
 }
 
-// Creates a StreamShuffler applying a permutation to a stream.
-func NewStreamShuffler(p Permutation, consume ConsumeFunc) StreamShuffler {
+// Creates a StreamShuffler applying a permutation to a stream. Argument `placeholder`
+// specifies a value that is inserted into the permuted stream in order to symbolize blank space.
+func NewStreamShuffler(p Permutation, placeholder interface{}, consume ConsumeFunc) StreamShuffler {
 	return &streamShuffler{
 		consume: consume,
 		forward: NewShuffler(p),
+		apply: func(f ConsumeFunc, v interface{}) error {
+			if v == nil {
+				v = placeholder
+			}
+			return f(v)
+		},
 	}
 }
 
 func (e *streamShuffler) Put(v interface{}) error {
-	if v == nil {
-		panic("v may not be nil")
-	}
-	if r := e.forward.Put(v); r != nil {
-		return e.consume(r)
-	}
-	return nil
+	r := e.forward.Put(v)
+	return e.apply(e.consume, r)
 }
 
 func (e *streamShuffler) End() error {
-	for i := 0; i < e.forward.Length(); i++ {
-		if r := e.forward.Put(nil); r != nil {
-			if err := e.consume(r); err != nil {
-				return err
-			}
+	for i := 0; i < e.forward.Length()-1; i++ {
+		r := e.forward.Put(nil)
+		if err := e.apply(e.consume, r); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -153,43 +152,18 @@ func (e *streamShuffler) WithFunc(consume ConsumeFunc) StreamShuffler {
 }
 
 // Creates a StreamShuffler applying the inverse permutation and thereby restoring
-// the original stream order.
-func NewInverseStreamShuffler(p Permutation, consume ConsumeFunc) StreamShuffler {
-	return &streamUnshuffler{
+// the original stream order. Argument `placeholder` specifies blank space inserted
+// into the stream by the original shuffler. Values equal to `placeholder` will not
+// be forwarded to `consume`.
+func NewInverseStreamShuffler(p Permutation, placeholder interface{}, consume ConsumeFunc) StreamShuffler {
+	return &streamShuffler{
 		consume: consume,
-		forward: NewShuffler(p),
-		inverse: NewShuffler(p.Inverse()),
-	}
-}
-
-var something interface{} = struct{}{}
-
-func (e *streamUnshuffler) Put(v interface{}) error {
-	for e.forward.Put(something) == nil {
-		e.inverse.Put(nil)
-	}
-	if r := e.inverse.Put(v); r != nil {
-		if err := e.consume(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (e *streamUnshuffler) End() error {
-	for i := 0; i < e.inverse.Length(); i++ {
-		if r := e.inverse.Put(nil); r != nil {
-			if err := e.consume(r); err != nil {
-				return err
+		forward: NewShuffler(p.Inverse()),
+		apply: func(f ConsumeFunc, v interface{}) error {
+			if v == nil || v == placeholder {
+				return nil
 			}
-		}
+			return f(v)
+		},
 	}
-	return nil
-}
-
-func (e *streamUnshuffler) WithFunc(consume ConsumeFunc) StreamShuffler {
-	var s streamUnshuffler
-	s = *e
-	s.consume = consume
-	return &s
 }

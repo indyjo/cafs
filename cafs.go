@@ -128,3 +128,11 @@ func ParseKey(s string) (*SKey, error) {
 
 	return &result, nil
 }
+
+func MustParseKey(s string) *SKey {
+	if key, err := ParseKey(s); err != nil {
+		panic(err)
+	} else {
+		return key
+	}
+}
