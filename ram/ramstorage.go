@@ -217,6 +217,12 @@ func (s *ramStorage) storeEntry(key *SKey, data []byte, chunks []chunkRef, info 
 		// Ref the reused entry.
 		s.lock(key, oldEntry)
 
+		// Unref all referenced chunks
+		for _, chunk := range chunks {
+			chunkEntry := s.entries[chunk.key]
+			s.release(&chunk.key, chunkEntry)
+		}
+
 		// re-use old entry
 		newEntry = oldEntry
 	} else {
