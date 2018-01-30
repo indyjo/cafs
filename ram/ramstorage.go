@@ -1,5 +1,5 @@
 //  BitWrk - A Bitcoin-friendly, anonymous marketplace for computing power
-//  Copyright (C) 2013-2017  Jonas Eschenburg <jonas@bitwrk.net>
+//  Copyright (C) 2013-2018  Jonas Eschenburg <jonas@bitwrk.net>
 //
 //  This program is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -88,11 +88,25 @@ type ramTemporary struct {
 	chunks    []chunkRef       // Grows every time a chunk boundary is encountered
 }
 
-func NewRamStorage(maxBytes int64) FileStorage {
+func NewRamStorage(maxBytes int64) BoundedStorage {
 	return &ramStorage{
 		entries:  make(map[SKey]*ramEntry),
 		bytesMax: maxBytes,
 	}
+}
+
+func (s *ramStorage) GetUsageInfo() UsageInfo {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return UsageInfo{Used: s.bytesUsed, Capacity: s.bytesMax, Locked: s.bytesLocked}
+}
+
+func (s *ramStorage) FreeCache() int64 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	oldBytesUsed := s.bytesUsed
+	s.reserveBytes("FreeCache", s.bytesMax)
+	return oldBytesUsed - s.bytesUsed
 }
 
 func (s *ramStorage) Get(key *SKey) (File, error) {
