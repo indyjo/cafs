@@ -60,9 +60,9 @@ type applyFunc func(ConsumeFunc, interface{}) error
 
 // Type streamShuffler uses a Shuffler to permute a sequence of arbitrary length.
 type streamShuffler struct {
-	consume ConsumeFunc
-	forward *Shuffler
-	apply   applyFunc
+	consume  ConsumeFunc
+	shuffler *Shuffler
+	apply    applyFunc
 }
 
 // Creates a random permutation of given length.
@@ -118,8 +118,8 @@ func (s *Shuffler) Length() int {
 // specifies a value that is inserted into the permuted stream in order to symbolize blank space.
 func NewStreamShuffler(p Permutation, placeholder interface{}, consume ConsumeFunc) StreamShuffler {
 	return &streamShuffler{
-		consume: consume,
-		forward: NewShuffler(p),
+		consume:  consume,
+		shuffler: NewShuffler(p),
 		apply: func(f ConsumeFunc, v interface{}) error {
 			if v == nil {
 				v = placeholder
@@ -130,13 +130,13 @@ func NewStreamShuffler(p Permutation, placeholder interface{}, consume ConsumeFu
 }
 
 func (e *streamShuffler) Put(v interface{}) error {
-	r := e.forward.Put(v)
+	r := e.shuffler.Put(v)
 	return e.apply(e.consume, r)
 }
 
 func (e *streamShuffler) End() error {
-	for i := 0; i < e.forward.Length()-1; i++ {
-		r := e.forward.Put(nil)
+	for i := 0; i < e.shuffler.Length()-1; i++ {
+		r := e.shuffler.Put(nil)
 		if err := e.apply(e.consume, r); err != nil {
 			return err
 		}
@@ -157,8 +157,8 @@ func (e *streamShuffler) WithFunc(consume ConsumeFunc) StreamShuffler {
 // be forwarded to `consume`.
 func NewInverseStreamShuffler(p Permutation, placeholder interface{}, consume ConsumeFunc) StreamShuffler {
 	return &streamShuffler{
-		consume: consume,
-		forward: NewShuffler(p.Inverse()),
+		consume:  consume,
+		shuffler: NewShuffler(p.Inverse()),
 		apply: func(f ConsumeFunc, v interface{}) error {
 			if v == nil || v == placeholder {
 				return nil
