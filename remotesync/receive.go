@@ -194,6 +194,7 @@ func (b *Builder) start() error {
 		panic("WriteWishList called twice")
 	}
 	b.started = true
+	return nil
 }
 
 var placeholder interface{} = struct{}{}
