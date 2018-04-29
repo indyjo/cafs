@@ -24,6 +24,7 @@ import (
 	"github.com/indyjo/cafs/remotesync/shuffle"
 	"io"
 	"log"
+	"sync"
 )
 
 var ErrDisposed = errors.New("Disposed")
@@ -51,6 +52,10 @@ type Builder struct {
 	chunks  chan chunk
 	info    string
 	perm    shuffle.Permutation
+
+	mutex    sync.Mutex // Guards subsequent variables
+	disposed bool       // Set in Dispose
+	started  bool       // Set in WriteWishList. Signals that chunks channel will be used.
 }
 
 // Returns a new receiver for reconstructing a file. Must eventually be disposed.
@@ -72,14 +77,19 @@ func NewBuilder(storage cafs.FileStorage, perm shuffle.Permutation, windowSize i
 // Disposes the receiver. Must be called exactly once per receiver. May cause the goroutines running
 // WriteWishList and ReconstructFileFromRequestedChunks to terminate with error ErrDisposed.
 func (b *Builder) Dispose() {
+	b.mutex.Lock()
+	if b.disposed {
+		panic("Builder must be disposed exactly once")
+	}
+	b.disposed = true
+	started := b.started
+	b.mutex.Unlock()
+
 	close(b.done)
-drain:
-	for {
-		select {
-		case chunk := <-b.chunks:
-			if chunk.length == 0 {
-				break drain
-			} else if chunk.file != nil {
+
+	if started {
+		for chunk := range b.chunks {
+			if chunk.file != nil {
 				chunk.file.Dispose()
 			}
 		}
@@ -93,6 +103,10 @@ func (b *Builder) WriteWishList(_r io.Reader, w FlushWriter) error {
 	if LoggingEnabled {
 		log.Printf("Receiver: Begin WriteWishList")
 		defer log.Printf("Receiver: End WriteWishList")
+	}
+
+	if err := b.start(); err != nil {
+		return err
 	}
 
 	defer close(b.chunks)
@@ -151,7 +165,11 @@ func (b *Builder) WriteWishList(_r io.Reader, w FlushWriter) error {
 		// Only wait until disposed.
 		select {
 		case b.chunks <- chunk:
+			// Responsibility for disposing chunk.file is passed to the channel
 		case <-b.done:
+			if chunk.file != nil {
+				chunk.file.Dispose()
+			}
 			return ErrDisposed
 		}
 
@@ -162,6 +180,20 @@ func (b *Builder) WriteWishList(_r io.Reader, w FlushWriter) error {
 		idx++
 	}
 	return bitWriter.Flush()
+}
+
+// Function start is called by WriteWishList to mark the Builder as started.
+// This has consequences for the Dispose method.
+func (b *Builder) start() error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	if b.disposed {
+		return ErrDisposed
+	}
+	if b.started {
+		panic("WriteWishList called twice")
+	}
+	b.started = true
 }
 
 var placeholder interface{} = struct{}{}
@@ -197,15 +229,18 @@ func (b *Builder) ReconstructFileFromRequestedChunks(_r io.Reader) (cafs.File, e
 
 	idx := 0
 	iteration := func() error {
-		// Check if the builder has been disposed
+		var chunkInfo chunk
+
+		// Wait until either a chunk info can be read from the channel, or the builder
+		// has been disposed.
 		select {
 		case <-b.done:
 			return ErrDisposed
-		default:
+		case chunkInfo = <-b.chunks:
+			// successfully read, continue...
 		}
 
-		// Read chunk info from the channel
-		chunkInfo := <-b.chunks
+		// It is our responsibility to dispose the file.
 		if chunkInfo.file != nil {
 			defer chunkInfo.file.Dispose()
 		}

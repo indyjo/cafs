@@ -19,6 +19,16 @@ func (p writerPrinter) Printf(format string, v ...interface{}) {
 	fmt.Fprintf(p.w, format+"\n", v...)
 }
 
+// This is a regression test that deadlocks as long as indyjo/bitwrk#152 isn't solved.
+// https://github.com/indyjo/bitwrk/issues/152
+func TestDispose(t *testing.T) {
+	store := NewRamStorage(256 * 1024)
+	perm := shuffle.Permutation(rand.Perm(10))
+	builder := NewBuilder(store, perm, 8, "Test file")
+	// Dispose builder before call to WriteWishList
+	builder.Dispose()
+}
+
 func TestRemoteSync(t *testing.T) {
 	// Re-use stores to test for leaks on the fly
 	storeA := NewRamStorage(8 * 1024 * 1024)
