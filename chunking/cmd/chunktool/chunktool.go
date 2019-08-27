@@ -39,29 +39,33 @@ func main() {
 	}
 
 	if *matrixMode {
-		allFingers := make([]string, 0, len(fingerprints))
-		for k, _ := range fingerprints {
-			allFingers = append(allFingers, k)
-		}
-		sort.Strings(allFingers)
-		for _, arg := range flag.Args() {
-			if handprint, err := chunkFile(arg, *numFingers, false, false); err != nil {
-				fmt.Println("Failed: ", err)
-			} else {
-				fingerprintsInHandprint := make(map[string]bool)
-				for _, fingerprint := range handprint.Fingerprints {
-					fingerprintsInHandprint[fmt.Sprintf("%16x", fingerprint[:8])] = true
-				}
-				row := make([]byte, 0, 32)
-				for _, fingerprint := range allFingers {
-					if _, ok := fingerprintsInHandprint[fingerprint]; ok {
-						row = append(row, '.')
-					} else {
-						row = append(row, ' ')
-					}
-				}
-				fmt.Printf("%s %s\n", row, arg)
+		printFingerprintMatrix(fingerprints)
+	}
+}
+
+func printFingerprintMatrix(fingerprints map[string]bool) {
+	allFingers := make([]string, 0, len(fingerprints))
+	for k := range fingerprints {
+		allFingers = append(allFingers, k)
+	}
+	sort.Strings(allFingers)
+	for _, arg := range flag.Args() {
+		if handprint, err := chunkFile(arg, *numFingers, false, false); err != nil {
+			fmt.Println("Failed: ", err)
+		} else {
+			fingerprintsInHandprint := make(map[string]bool)
+			for _, fingerprint := range handprint.Fingerprints {
+				fingerprintsInHandprint[fmt.Sprintf("%16x", fingerprint[:8])] = true
 			}
+			row := make([]byte, 0, 32)
+			for _, fingerprint := range allFingers {
+				if _, ok := fingerprintsInHandprint[fingerprint]; ok {
+					row = append(row, '.')
+				} else {
+					row = append(row, ' ')
+				}
+			}
+			fmt.Printf("%s %s\n", row, arg)
 		}
 	}
 }

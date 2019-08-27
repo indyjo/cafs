@@ -1,5 +1,5 @@
 //  BitWrk - A Bitcoin-friendly, anonymous marketplace for computing power
-//  Copyright (C) 2013-2018 Jonas Eschenburg <jonas@bitwrk.net>
+//  Copyright (C) 2013-2019  Jonas Eschenburg <jonas@bitwrk.net>
 //
 //  This program is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -14,11 +14,26 @@
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// Package remotesync implements a differential file synching mechanism based on the content-based chunking
-// that is used by CAFS internally.
-// Step 1: Sender and receiver agree on hashes of the file's chunks
-// Step 2: Receiver streams missing chunks (one bit per chunk)
-// Step 3: Sender responds by sending content of requested chunks
-package remotesync
+package cafs
 
-var LoggingEnabled = false
+import (
+	"encoding/hex"
+	"encoding/json"
+)
+
+var _ json.Marshaler = SKey{}
+var _ json.Unmarshaler = &SKey{}
+
+func (k SKey) MarshalJSON() ([]byte, error) {
+	l := hex.EncodedLen(len(k)) + 2
+	dst := make([]byte, l)
+	dst[0] = '"'
+	dst[l-1] = '"'
+	hex.Encode(dst[1:l-1], k[:])
+	return dst, nil
+}
+
+func (k *SKey) UnmarshalJSON(b []byte) error {
+	t := []byte(k[:])
+	return json.Unmarshal(b, &t)
+}

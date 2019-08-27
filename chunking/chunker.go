@@ -19,6 +19,10 @@ package chunking
 
 import "github.com/indyjo/cafs/chunking/adler32"
 
+const (
+	MaxChunkSize = adler32.MAX_CHUNK
+)
+
 type Chunker interface {
 	// Scans the byte sequence for chunk boundaries.
 	// Returns the number of bytes from data that can be added to the current chunk.

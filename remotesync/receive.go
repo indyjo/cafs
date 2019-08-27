@@ -1,5 +1,5 @@
 //  BitWrk - A Bitcoin-friendly, anonymous marketplace for computing power
-//  Copyright (C) 2013-2018 Jonas Eschenburg <jonas@bitwrk.net>
+//  Copyright (C) 2013-2019 Jonas Eschenburg <jonas@bitwrk.net>
 //
 //  This program is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -27,8 +27,8 @@ import (
 	"sync"
 )
 
-var ErrDisposed = errors.New("Disposed")
-var ErrUnexpectedChunk = errors.New("Unexpected chunk")
+var ErrDisposed = errors.New("disposed")
+var ErrUnexpectedChunk = errors.New("unexpected chunk")
 
 // Interface FlushWriter acts like an io.Writer with an additional Flush method.
 type FlushWriter interface {
@@ -36,12 +36,11 @@ type FlushWriter interface {
 	Flush()
 }
 
-// Used by receiver to memorize information about a chunk in the window between
+// Used by receiver to memorize information about a chunk in the time window between
 // putting it into the wishlist and receiving the actual chunk data.
-type chunk struct {
-	key       cafs.SKey // The hash key of the chunk
+type memo struct {
+	ci        chunkInfo // key and length
 	file      cafs.File // A File if the chunk existed already, nil otherwise
-	length    int       // The length of the chunk
 	requested bool      // Whether the chunk was requested from the sender
 }
 
@@ -49,32 +48,29 @@ type chunk struct {
 type Builder struct {
 	done    chan struct{}
 	storage cafs.FileStorage
-	chunks  chan chunk
+	memos   chan memo
 	info    string
-	perm    shuffle.Permutation
+	syncinf *SyncInfo
 
 	mutex    sync.Mutex // Guards subsequent variables
 	disposed bool       // Set in Dispose
 	started  bool       // Set in WriteWishList. Signals that chunks channel will be used.
 }
 
-// Returns a new receiver for reconstructing a file. Must eventually be disposed.
-// The builder can then proceed reading a byte sequence encoded with EncodeChunkHashes,
-// and output a "wishlist" of chunks that are missing in the local storage
-// for complete reconstruction of the file.
-func NewBuilder(storage cafs.FileStorage, perm shuffle.Permutation, windowSize int, info string) *Builder {
-	p := make(shuffle.Permutation, len(perm))
-	copy(p, perm)
+// Returns a new Builder for reconstructing a file. Must eventually be disposed.
+// The builder can then proceed sending a "wishlist" of chunks that are missing
+// in the local storage for complete reconstruction of the file.
+func NewBuilder(storage cafs.FileStorage, syncinf *SyncInfo, windowSize int, info string) *Builder {
 	return &Builder{
 		done:    make(chan struct{}),
 		storage: storage,
-		chunks:  make(chan chunk, windowSize),
+		memos:   make(chan memo, windowSize),
 		info:    info,
-		perm:    p,
+		syncinf: syncinf,
 	}
 }
 
-// Disposes the receiver. Must be called exactly once per receiver. May cause the goroutines running
+// Disposes the Builder. Must be called exactly once per Builder. May cause the goroutines running
 // WriteWishList and ReconstructFileFromRequestedChunks to terminate with error ErrDisposed.
 func (b *Builder) Dispose() {
 	b.mutex.Lock()
@@ -88,7 +84,7 @@ func (b *Builder) Dispose() {
 	close(b.done)
 
 	if started {
-		for chunk := range b.chunks {
+		for chunk := range b.memos {
 			if chunk.file != nil {
 				chunk.file.Dispose()
 			}
@@ -96,10 +92,9 @@ func (b *Builder) Dispose() {
 	}
 }
 
-// Reads a byte sequence encoded with WriteChunkHashes and
-// outputs a bit stream with '1' for each missing chunk, and
+// Outputs a bit stream with '1' for each missing chunk, and
 // '0' for each chunk that is already available or already requested.
-func (b *Builder) WriteWishList(_r io.Reader, w FlushWriter) error {
+func (b *Builder) WriteWishList(w FlushWriter) error {
 	if LoggingEnabled {
 		log.Printf("Receiver: Begin WriteWishList")
 		defer log.Printf("Receiver: End WriteWishList")
@@ -109,75 +104,64 @@ func (b *Builder) WriteWishList(_r io.Reader, w FlushWriter) error {
 		return err
 	}
 
-	defer close(b.chunks)
-
-	// We need ReadByte
-	r := bufio.NewReader(_r)
+	defer close(b.memos)
 
 	requested := make(map[cafs.SKey]bool)
-	idx := 0
-	var lastPos int64
-
-	// Utility closure for creating informative error messages
-	statusError := func(msg string, err error) error {
-		return fmt.Errorf("Error %v after successfully reading %v chunks hashes up to byte position %v: %v",
-			msg, idx, lastPos, err)
-	}
-
 	bitWriter := newBitWriter(w)
 
-	for {
-		// Read a chunk hash and its length
-		var key cafs.SKey
-		if _, err := io.ReadFull(r, key[:]); err == io.EOF {
-			break
-		} else if err != nil {
-			return statusError("reading chunk hash", err)
-		}
-		var length int64
-		if l, err := readChunkLength(r); err != nil {
-			return statusError("reading length of chunk", err)
-		} else {
-			length = l
-		}
+	consumeFunc := func(v interface{}) error {
+		ci := v.(chunkInfo)
+		key := ci.Key
 
-		lastPos += length
-		chunk := chunk{
-			key:    key,
-			length: int(length),
+		mem := memo{
+			ci: ci,
 		}
 
 		if key == emptyKey || requested[key] {
 			// This key was already requested. Also, the empty key is never requested.
-			chunk.requested = false
+			mem.requested = false
 		} else if file, err := b.storage.Get(&key); err != nil {
 			// File was not found in storage -> request and remember
-			chunk.requested = true
+			mem.requested = true
 			requested[key] = true
 		} else {
 			// File was already in storage -> prevent it from being collected until it is needed
-			chunk.file = file
-			chunk.requested = false
+			mem.file = file
+			mem.requested = false
 			requested[key] = true
 		}
 
-		// Write chunk info into channel. This might block if channel buffer is full.
+		// Write memo into channel. This might block if channel buffer is full.
 		// Only wait until disposed.
 		select {
-		case b.chunks <- chunk:
+		case b.memos <- mem:
 			// Responsibility for disposing chunk.file is passed to the channel
 		case <-b.done:
-			if chunk.file != nil {
-				chunk.file.Dispose()
+			if mem.file != nil {
+				mem.file.Dispose()
 			}
 			return ErrDisposed
 		}
 
-		if err := bitWriter.WriteBit(chunk.requested); err != nil {
+		if err := bitWriter.WriteBit(mem.requested); err != nil {
 			return err
 		}
 
-		idx++
+		return nil // success
+	}
+
+	// Create a shuffler using the above consumeFunc and push the SyncInfo's chunk infos through it.
+	// For every chunkInfo leaving the shuffler (in shuffled order), the consumeFunc
+	// writes a bit into the wishlist.
+	shuffler := shuffle.NewStreamShuffler(b.syncinf.Perm, emptyChunkInfo, consumeFunc)
+	nChunks := len(b.syncinf.Chunks)
+	for idx := 0; idx < nChunks; idx++ {
+		if err := shuffler.Put(b.syncinf.Chunks[idx]); err != nil {
+			return fmt.Errorf("error from shuffler.Put: %v", err)
+		}
+	}
+	if err := shuffler.End(); err != nil {
+		return fmt.Errorf("error from shuffler.End: %v", err)
 	}
 	return bitWriter.Flush()
 }
@@ -198,6 +182,7 @@ func (b *Builder) start() error {
 }
 
 var placeholder interface{} = struct{}{}
+var zeroMemo = memo{}
 
 // Reads a sequence of length-prefixed data chunks and tries to reconstruct a file from that
 // information.
@@ -212,9 +197,9 @@ func (b *Builder) ReconstructFileFromRequestedChunks(_r io.Reader) (cafs.File, e
 
 	r := bufio.NewReader(_r)
 
-	errDone := errors.New("Done")
+	errDone := errors.New("done")
 
-	unshuffler := shuffle.NewInverseStreamShuffler(b.perm, placeholder, func(v interface{}) error {
+	unshuffler := shuffle.NewInverseStreamShuffler(b.syncinf.Perm, placeholder, func(v interface{}) error {
 		chunk := v.(cafs.File)
 		// Write a chunk of the work file
 		err := appendChunk(temp, chunk)
@@ -230,56 +215,56 @@ func (b *Builder) ReconstructFileFromRequestedChunks(_r io.Reader) (cafs.File, e
 
 	idx := 0
 	iteration := func() error {
-		var chunkInfo chunk
+		var mem memo
 
 		// Wait until either a chunk info can be read from the channel, or the builder
 		// has been disposed.
 		select {
 		case <-b.done:
 			return ErrDisposed
-		case chunkInfo = <-b.chunks:
+		case mem = <-b.memos:
 			// successfully read, continue...
 		}
 
 		// It is our responsibility to dispose the file.
-		if chunkInfo.file != nil {
-			defer chunkInfo.file.Dispose()
+		if mem.file != nil {
+			defer mem.file.Dispose()
 		}
 
-		if chunkInfo.key == emptyKey {
+		if mem.ci == emptyChunkInfo {
 			return unshuffler.Put(placeholder)
 		}
 
 		// Under the following circumstances, read chunk data from the stream.
 		//  - chunk data was requested
-		//  - the chunk info stream has ended (to check whether the chunk data stream also ends).
+		//  - the chunk memo stream has ended (to check whether the chunk data stream also ends).
 		// If there was a real error, abort.
-		if chunkInfo.requested || chunkInfo.key == zeroKey {
+		if mem.requested || mem == zeroMemo {
 			chunkFile, err := readChunk(b.storage, r, fmt.Sprintf("%v #%d", b.info, idx))
 			if chunkFile != nil {
 				defer chunkFile.Dispose()
 			}
-			if err == io.EOF && chunkInfo.key == zeroKey {
+			if err == io.EOF && mem == zeroMemo {
 				return errDone
 			} else if err == io.EOF {
 				return io.ErrUnexpectedEOF
 			} else if err != nil {
 				return err
-			} else if chunkInfo.key == zeroKey {
-				return fmt.Errorf("Unsolicited chunk data")
-			} else if chunkFile.Key() != chunkInfo.key {
+			} else if mem == zeroMemo {
+				return fmt.Errorf("unsolicited chunk data")
+			} else if chunkFile.Key() != mem.ci.Key {
 				return ErrUnexpectedChunk
-			} else if chunkFile.Size() != int64(chunkInfo.length) {
+			} else if chunkFile.Size() != int64(mem.ci.Size) {
 				return ErrUnexpectedChunk
 			}
 		}
 
 		// Retrieve the chunk from CAFS (we can expect to find it)
-		chunk, _ := b.storage.Get(&chunkInfo.key)
+		chunk, _ := b.storage.Get(&mem.ci.Key)
 		// ... and dispatch it to the unshuffler, where it will be buffered for a while.
 		// Disposing is done by the unshuffler's ConsumeFunc.
 		if LoggingEnabled {
-			log.Printf("Receiver: unshuffler.Put(size:%v, %v)", chunk.Size(), chunk.Key())
+			log.Printf("Receiver: unshuffler.Put(total:%v, %v)", chunk.Size(), chunk.Key())
 		}
 		return unshuffler.Put(chunk)
 	}
@@ -307,9 +292,10 @@ func (b *Builder) ReconstructFileFromRequestedChunks(_r io.Reader) (cafs.File, e
 // Function appendChunk appends data of `chunk` to `temp`.
 func appendChunk(temp io.Writer, chunk cafs.File) error {
 	if LoggingEnabled {
-		log.Printf("Receiver: appendChunk(size:%v, %v)", chunk.Size(), chunk.Key())
+		log.Printf("Receiver: appendChunk(total:%v, %v)", chunk.Size(), chunk.Key())
 	}
 	r := chunk.Open()
+	//noinspection GoUnhandledErrorResult
 	defer r.Close()
 	if _, err := io.Copy(temp, r); err != nil {
 		return err

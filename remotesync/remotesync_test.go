@@ -23,8 +23,9 @@ func (p writerPrinter) Printf(format string, v ...interface{}) {
 // https://github.com/indyjo/bitwrk/issues/152
 func TestDispose(t *testing.T) {
 	store := NewRamStorage(256 * 1024)
-	perm := shuffle.Permutation(rand.Perm(10))
-	builder := NewBuilder(store, perm, 8, "Test file")
+	syncinfo := &SyncInfo{}
+	syncinfo.SetPermutation(rand.Perm(10))
+	builder := NewBuilder(store, syncinfo, 8, "Test file")
 	// Dispose builder before call to WriteWishList
 	builder.Dispose()
 }
@@ -90,42 +91,36 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 	fileA := tempA.File()
 	defer fileA.Dispose()
 
-	builder := NewBuilder(storeB, perm, 8, fmt.Sprintf("Recovered A(%.2f,%d)", p, nBlocks))
+	syncinf := &SyncInfo{}
+	syncinf.SetPermutation(perm)
+	syncinf.SetChunksFromFile(fileA)
+	builder := NewBuilder(storeB, syncinf, 8, fmt.Sprintf("Recovered A(%.2f,%d)", p, nBlocks))
 	defer builder.Dispose()
 
 	// task: transfer file A to storage B
-	// Pipe 1 is used to transfer the list of chunk hashes to the receiver
+	// Pipe 1 is used to transfer the wishlist bit-stream from the receiver to the sender
 	pipeReader1, pipeWriter1 := io.Pipe()
-	// Pipe 2 is used to transfer the bitmask of requested chunks back to the sender
+	// Pipe 2 is used to transfer the actual requested chunk data to the receiver
 	pipeReader2, pipeWriter2 := io.Pipe()
-	// Pipe 3 is used to transfer the actual requested chunk data to the receiver
-	pipeReader3, pipeWriter3 := io.Pipe()
 
 	go func() {
-		if err := WriteChunkHashes(fileA, perm, pipeWriter1); err != nil {
-			pipeWriter1.CloseWithError(fmt.Errorf("Error sending chunk hashes: %v", err))
+		if err := builder.WriteWishList(flushWriter{pipeWriter1}); err != nil {
+			pipeWriter1.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
 		} else {
 			pipeWriter1.Close()
 		}
 	}()
+
 	go func() {
-		if err := builder.WriteWishList(pipeReader1, flushWriter{pipeWriter2}); err != nil {
-			pipeWriter2.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
+		if err := WriteChunkData(storeA, fileA, bufio.NewReader(pipeReader1), perm, pipeWriter2, nil); err != nil {
+			pipeWriter2.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
 		} else {
 			pipeWriter2.Close()
 		}
 	}()
 
-	go func() {
-		if err := WriteChunkData(storeA, fileA, bufio.NewReader(pipeReader2), perm, pipeWriter3, nil); err != nil {
-			pipeWriter3.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
-		} else {
-			pipeWriter3.Close()
-		}
-	}()
-
 	var fileB cafs.File
-	if f, err := builder.ReconstructFileFromRequestedChunks(pipeReader3); err != nil {
+	if f, err := builder.ReconstructFileFromRequestedChunks(pipeReader2); err != nil {
 		t.Fatalf("Error reconstructing: %v", err)
 	} else {
 		fileB = f
@@ -144,7 +139,7 @@ func assertEqual(t *testing.T, a, b io.ReadCloser) {
 		nA, errA := a.Read(bufA)
 		nB, errB := b.Read(bufB)
 		if nA != nB {
-			t.Fatal("Files differ in size")
+			t.Fatal("Files differ in total")
 		}
 		if errA != errB {
 			t.Fatalf("Error a:%v b:%v", errA, errB)
