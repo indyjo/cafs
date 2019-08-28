@@ -23,7 +23,7 @@ func TestSyncInfoJSON(t *testing.T) {
 		t.Fatalf("Error decoding: %v", err)
 	}
 
-	b2, err := json.Marshal(s)
+	b2, err := json.Marshal(s2)
 	if err != nil {
 		t.Fatalf("Error encoding: %v", err)
 	}

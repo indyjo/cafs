@@ -34,6 +34,12 @@ func (k SKey) MarshalJSON() ([]byte, error) {
 }
 
 func (k *SKey) UnmarshalJSON(b []byte) error {
-	t := []byte(k[:])
-	return json.Unmarshal(b, &t)
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	if _, err := hex.Decode(k[:], []byte(s)); err != nil {
+		return err
+	}
+	return nil
 }
