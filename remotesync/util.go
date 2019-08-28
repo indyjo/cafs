@@ -21,7 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/indyjo/cafs"
-	"github.com/indyjo/cafs/chunking/adler32"
+	"github.com/indyjo/cafs/chunking"
 	"io"
 )
 
@@ -35,6 +35,16 @@ type chunkInfo struct {
 }
 
 var emptyChunkInfo = chunkInfo{emptyKey, 0}
+
+func readChunkLength(r *bufio.Reader) (int64, error) {
+	if l, err := binary.ReadVarint(r); err != nil {
+		return 0, err
+	} else if l < 0 || l > chunking.MaxChunkSize {
+		return 0, fmt.Errorf("Illegal chunk length: %v", l)
+	} else {
+		return l, nil
+	}
+}
 
 func writeVarint(w io.Writer, value int64) error {
 	var buf [binary.MaxVarintLen64]byte
@@ -107,13 +117,10 @@ func (r *bitReader) ReadBit() (bit bool, err error) {
 // The expected encoding is (varint, data...).
 func readChunk(s cafs.FileStorage, r *bufio.Reader, info string) (cafs.File, error) {
 	var length int64
-	if n, err := binary.ReadVarint(r); err != nil {
+	if n, err := readChunkLength(r); err != nil {
 		return nil, err
 	} else {
 		length = n
-	}
-	if length < 0 || length > adler32.MAX_CHUNK {
-		return nil, fmt.Errorf("Invalid chunk length: %v", length)
 	}
 	tempChunk := s.Create(info)
 	defer tempChunk.Dispose()
