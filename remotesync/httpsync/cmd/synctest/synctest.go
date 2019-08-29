@@ -32,7 +32,7 @@ func main() {
 
 	if preload != "" {
 		if err := loadFile(storage, preload); err != nil {
-			log.Fatalf("Error loading '[v]: %v", preload, err)
+			log.Fatalf("Error loading '[%v]: %v", preload, err)
 		}
 	}
 
