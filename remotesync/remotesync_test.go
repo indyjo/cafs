@@ -112,7 +112,9 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 	}()
 
 	go func() {
-		if err := WriteChunkData(storeA, fileA, bufio.NewReader(pipeReader1), perm, pipeWriter2, nil); err != nil {
+		chunks := ChunksOfFile(fileA)
+		defer chunks.Dispose()
+		if err := WriteChunkData(chunks, fileA.Size(), bufio.NewReader(pipeReader1), perm, pipeWriter2, nil); err != nil {
 			pipeWriter2.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
 		} else {
 			pipeWriter2.Close()
