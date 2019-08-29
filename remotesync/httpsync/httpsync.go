@@ -102,7 +102,7 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm, w, nil)
 	if err != nil {
-		log.Print("Error in WriteChunkDate: %v", err)
+		log.Printf("Error in WriteChunkDate: %v", err)
 		return
 	}
 }
