@@ -1,7 +1,23 @@
+//  BitWrk - A Bitcoin-friendly, anonymous marketplace for computing power
+//  Copyright (C) 2013-2019 Jonas Eschenburg <jonas@bitwrk.net>
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU General Public License for more details.
+//
+//  You should have received a copy of the GNU General Public License
+//  along with this program.  If not, see <http://www.gnu.org/licenses/>.package main
+
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/indyjo/cafs"
@@ -10,6 +26,7 @@ import (
 	"github.com/indyjo/cafs/remotesync/httpsync"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"runtime/pprof"
@@ -45,7 +62,7 @@ func main() {
 		}
 		profile := pprof.Lookup(name)
 		if profile == nil {
-			w.Write([]byte("No such profile"))
+			_, _ = w.Write([]byte("No such profile"))
 			return
 		}
 		err := profile.WriteTo(w, 1)
@@ -82,7 +99,7 @@ func loadFile(storage cafs.FileStorage, path string) (err error) {
 	defer file.Dispose()
 	log.Printf("Read file: %v (%v bytes, chunked: %v, %v chunks)", path, n, file.IsChunked(), file.NumChunks())
 
-	handler := httpsync.NewFileHandlerFromFile(file)
+	handler := httpsync.NewFileHandlerFromFile(file, rand.Perm(256))
 	fileHandlers[file.Key().String()] = handler
 
 	path = fmt.Sprintf("/file/%v", file.Key())
@@ -113,63 +130,13 @@ func handleSyncFrom(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type flushWriter struct {
-	w io.Writer
-	f http.Flusher
-}
-
-func (f flushWriter) Write(p []byte) (n int, err error) {
-	return f.w.Write(p)
-}
-
-func (f flushWriter) Flush() {
-}
-
 func syncFile(fileStorage cafs.FileStorage, source string) error {
 	log.Printf("Sync from %v", source)
-	resp, err := http.Get(source)
-	if err != nil {
+	if file, err := httpsync.SyncFrom(context.Background(), fileStorage, http.DefaultClient, source, "synced from "+source); err != nil {
 		return err
+	} else {
+		log.Printf("Successfully received %v (%v bytes)", file.Key(), file.Size())
+		file.Dispose()
 	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET returned status %v", resp.Status)
-	}
-	var syncinfo remotesync.SyncInfo
-	err = json.NewDecoder(resp.Body).Decode(&syncinfo)
-	if err != nil {
-		return err
-	}
-
-	builder := remotesync.NewBuilder(storage, &syncinfo, 32, "synced from "+source)
-	defer builder.Dispose()
-
-	pr, pw := io.Pipe()
-	req, err := http.NewRequest(http.MethodPost, source, pr)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		err := builder.WriteWishList(flushWriter{
-			w: pw,
-			f: nil,
-		})
-		if err != nil {
-			log.Printf("Error in WriteWishList: %v", err)
-		}
-		_ = pw.Close()
-	}()
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-
-	file, err := builder.ReconstructFileFromRequestedChunks(res.Body)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Successfully received %v (%v bytes)", file.Key(), file.Size())
 	return nil
 }

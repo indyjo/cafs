@@ -19,29 +19,30 @@ package httpsync
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/indyjo/cafs"
 	"github.com/indyjo/cafs/remotesync"
+	"github.com/indyjo/cafs/remotesync/shuffle"
+	"io"
+	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
-	"os"
 	"sync"
 )
 
-type FilesSource interface {
-	NextFiles() (remotesync.Files, error)
-	Dispose()
-}
-
+// Struct FileHandler implements the http.Handler interface and serves a file over HTTP.
+// The protocol used matches with function SyncFrom.
+// Create using the New... functions.
 type FileHandler struct {
 	m        sync.Mutex
-	source   FilesSource
+	source   chunksSource
 	syncinfo *remotesync.SyncInfo
 	log      cafs.Printer
 }
 
+// It is the owner's responsibility to correctly dispose of FileHandler instances.
 func (handler *FileHandler) Dispose() {
 	handler.m.Lock()
 	s := handler.source
@@ -53,36 +54,39 @@ func (handler *FileHandler) Dispose() {
 	}
 }
 
-type fileBaseFileSource struct {
-	file cafs.File
-}
-
-func (f fileBaseFileSource) NextFiles() (remotesync.Files, error) {
-	file := f.file
-	if file == nil {
-		return nil, errors.New("File already disposed")
-	}
-	return remotesync.ChunksOfFile(file), nil
-}
-
-func (f fileBaseFileSource) Dispose() {
-	file := f.file
-	f.file = nil
-	if file != nil {
-		file.Dispose()
-	}
-}
-
-func NewFileHandlerFromFile(file cafs.File) *FileHandler {
+// Function NewFileHandlerFromFile creates a FileHandler that serves chunks of a File.
+func NewFileHandlerFromFile(file cafs.File, perm shuffle.Permutation) *FileHandler {
 	result := &FileHandler{
 		m:        sync.Mutex{},
-		source:   fileBaseFileSource{file.Duplicate()},
-		syncinfo: &remotesync.SyncInfo{},
-		log:      cafs.NewWriterPrinter(os.Stderr), // TODO take parameter
+		source:   fileBasedChunksSource{file: file.Duplicate()},
+		syncinfo: &remotesync.SyncInfo{Perm: perm},
+		log:      cafs.NewWriterPrinter(ioutil.Discard),
 	}
-	result.syncinfo.SetPermutation(rand.Perm(256))
 	result.syncinfo.SetChunksFromFile(file)
 	return result
+}
+
+// Function NewFileHandlerFromSyncInfo creates a FileHandler that serves chunks as
+// specified in a FileInfo. It doesn't necessarily require all of the chunks to be present
+// and will block waiting for a missing chunk to become available.
+// As a specialty, a FileHander created using this function needs not be disposed.
+func NewFileHandlerFromSyncInfo(syncinfo *remotesync.SyncInfo, storage cafs.FileStorage) *FileHandler {
+	result := &FileHandler{
+		m: sync.Mutex{},
+		source: syncInfoChunksSource{
+			syncinfo: syncinfo,
+			storage:  storage,
+		},
+		syncinfo: syncinfo,
+		log:      cafs.NewWriterPrinter(ioutil.Discard),
+	}
+	return result
+}
+
+// Sets the FileHandler's log Printer.
+func (handler *FileHandler) WithPrinter(printer cafs.Printer) *FileHandler {
+	handler.log = printer
+	return handler
 }
 
 func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +99,7 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	chunks, err := handler.source.NextFiles()
+	chunks, err := handler.source.GetChunks()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -105,4 +109,50 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error in WriteChunkDate: %v", err)
 		return
 	}
+}
+
+// Function SyncFrom uses an HTTP client to connect to some URL and download a fie into the
+// given FileStorage.
+func SyncFrom(ctx context.Context, storage cafs.FileStorage, client *http.Client, url, info string) (file cafs.File, err error) {
+	// Fetch SyncInfo from remote
+	resp, err := client.Get(url)
+	if err != nil {
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET returned status %v", resp.Status)
+	}
+	var syncinfo remotesync.SyncInfo
+	err = json.NewDecoder(resp.Body).Decode(&syncinfo)
+	if err != nil {
+		return
+	}
+
+	// Create Builder and establish a bidirectional POST connection
+	builder := remotesync.NewBuilder(storage, &syncinfo, 32, info)
+	defer builder.Dispose()
+
+	pr, pw := io.Pipe()
+	req, err := http.NewRequest(http.MethodPost, url, pr)
+	if err != nil {
+		return
+	}
+
+	// Enable cancelation
+	req = req.WithContext(ctx)
+
+	go func() {
+		if err := builder.WriteWishList(nopFlushWriter{pw}); err != nil {
+			_ = pw.CloseWithError(fmt.Errorf("error in WriteWishList: %v", err))
+			return
+		}
+		_ = pw.Close()
+	}()
+
+	res, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	file, err = builder.ReconstructFileFromRequestedChunks(res.Body)
+	return
 }

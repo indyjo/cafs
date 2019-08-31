@@ -29,32 +29,32 @@ import (
 // the caller may subscribe to the current transmission status.
 type TransferStatusCallback func(bytesToTransfer, bytesTransferred int64)
 
-// Interface Files allows iterating over any sequence of files.
-type Files interface {
-	// Function NextFile returns either of three cases:
+// Interface Chunks allows iterating over any sequence of chunks.
+type Chunks interface {
+	// Function NextChunk returns either of three cases:
 	// - A File, nil   (good case)
 	// - nil, io.EOF   (terminal case: end of stream)
 	// - nil, an error (terminal case: an error occurred)
 	// It is the caller's duty to call Dispose() on the file returned.
-	NextFile() (cafs.File, error)
+	NextChunk() (cafs.File, error)
 
 	// Function Dispose must be called when this object is no longer used.
 	Dispose()
 }
 
-// Function ChunksOfFiles returns the chunks of a File as an implementation of the Files
+// Function ChunksOfFiles returns the chunks of a File as an implementation of the Chunks
 // interface. It's the caller's responsibility to call Dispose() on the returned object.
-func ChunksOfFile(file cafs.File) Files {
+func ChunksOfFile(file cafs.File) Chunks {
 	return chunksOfFile{iter: file.Chunks()}
 }
 
 // Struct chunksOfFile is a minimal wrapper around a FileIterator that implements
-// the Files interface.
+// the Chunks interface.
 type chunksOfFile struct {
 	iter cafs.FileIterator
 }
 
-func (c chunksOfFile) NextFile() (cafs.File, error) {
+func (c chunksOfFile) NextChunk() (cafs.File, error) {
 	if c.iter.Next() {
 		return c.iter.File(), nil
 	}
@@ -68,7 +68,7 @@ func (c chunksOfFile) Dispose() {
 // Iterates over a wishlist (read from `r` and pertaining to a permuted order of hashes),
 // and calls `f` for each chunk of `file`, requested or not.
 // If `f` returns an error, aborts the iteration and also returns the error.
-func forEachChunk(chunks Files, r io.ByteReader, perm shuffle.Permutation, f func(chunk cafs.File, requested bool) error) error {
+func forEachChunk(chunks Chunks, r io.ByteReader, perm shuffle.Permutation, f func(chunk cafs.File, requested bool) error) error {
 	bits := newBitReader(r)
 
 	// Prepare shuffler for iterating the file's chunks in shuffled order, matching them with
@@ -112,7 +112,7 @@ func forEachChunk(chunks Files, r io.ByteReader, perm shuffle.Permutation, f fun
 
 	// Iterate through the chunks and put their keys into the shuffler.
 	for {
-		if chunk, err := chunks.NextFile(); err == nil {
+		if chunk, err := chunks.NextChunk(); err == nil {
 			if err := shuffler.Put(chunk); err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func forEachChunk(chunks Files, r io.ByteReader, perm shuffle.Permutation, f fun
 // Writes a stream of chunk length / data pairs, permuted by a shuffler corresponding to `perm`,
 // into an io.Writer, based on the chunks of a file and a matching permuted wishlist of requested chunks,
 // read from `r`.
-func WriteChunkData(chunks Files, bytesToTransfer int64, r io.ByteReader, perm shuffle.Permutation, w io.Writer, cb TransferStatusCallback) error {
+func WriteChunkData(chunks Chunks, bytesToTransfer int64, r io.ByteReader, perm shuffle.Permutation, w io.Writer, cb TransferStatusCallback) error {
 	if LoggingEnabled {
 		log.Printf("Sender: Begin WriteChunkData")
 		defer log.Printf("Sender: End WriteChunkData")
@@ -158,11 +158,14 @@ func WriteChunkData(chunks Files, bytesToTransfer int64, r io.ByteReader, perm s
 				return err
 			}
 			r := chunk.Open()
-			defer r.Close()
 			if n, err := io.Copy(w, r); err != nil {
+				_ = r.Close()
 				return err
 			} else {
 				bytesTransferred += n
+			}
+			if err := r.Close(); err != nil {
+				return err
 			}
 		} else {
 			bytesToTransfer -= chunk.Size()

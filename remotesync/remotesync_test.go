@@ -11,14 +11,6 @@ import (
 	"testing"
 )
 
-type writerPrinter struct {
-	w io.Writer
-}
-
-func (p writerPrinter) Printf(format string, v ...interface{}) {
-	fmt.Fprintf(p.w, format+"\n", v...)
-}
-
 // This is a regression test that deadlocks as long as indyjo/bitwrk#152 isn't solved.
 // https://github.com/indyjo/bitwrk/issues/152
 func TestDispose(t *testing.T) {
@@ -105,9 +97,9 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 
 	go func() {
 		if err := builder.WriteWishList(flushWriter{pipeWriter1}); err != nil {
-			pipeWriter1.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
+			_ = pipeWriter1.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
 		} else {
-			pipeWriter1.Close()
+			_ = pipeWriter1.Close()
 		}
 	}()
 
@@ -115,9 +107,9 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 		chunks := ChunksOfFile(fileA)
 		defer chunks.Dispose()
 		if err := WriteChunkData(chunks, fileA.Size(), bufio.NewReader(pipeReader1), perm, pipeWriter2, nil); err != nil {
-			pipeWriter2.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
+			_ = pipeWriter2.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
 		} else {
-			pipeWriter2.Close()
+			_ = pipeWriter2.Close()
 		}
 	}()
 
@@ -141,13 +133,13 @@ func assertEqual(t *testing.T, a, b io.ReadCloser) {
 		nA, errA := a.Read(bufA)
 		nB, errB := b.Read(bufB)
 		if nA != nB {
-			t.Fatal("Files differ in total")
+			t.Fatal("Chunks differ in total")
 		}
 		if errA != errB {
 			t.Fatalf("Error a:%v b:%v", errA, errB)
 		}
 		if bufA[0] != bufB[0] {
-			t.Fatalf("Files differ in content at position %v: %02x vs %02x", count, bufA[0], bufB[0])
+			t.Fatalf("Chunks differ in content at position %v: %02x vs %02x", count, bufA[0], bufB[0])
 		}
 		if errA == io.EOF && errB == io.EOF {
 			break

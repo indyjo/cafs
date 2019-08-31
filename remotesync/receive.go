@@ -39,7 +39,7 @@ type FlushWriter interface {
 // Used by receiver to memorize information about a chunk in the time window between
 // putting it into the wishlist and receiving the actual chunk data.
 type memo struct {
-	ci        chunkInfo // key and length
+	ci        ChunkInfo // key and length
 	file      cafs.File // A File if the chunk existed already, nil otherwise
 	requested bool      // Whether the chunk was requested from the sender
 }
@@ -110,7 +110,7 @@ func (b *Builder) WriteWishList(w FlushWriter) error {
 	bitWriter := newBitWriter(w)
 
 	consumeFunc := func(v interface{}) error {
-		ci := v.(chunkInfo)
+		ci := v.(ChunkInfo)
 		key := ci.Key
 
 		mem := memo{
@@ -151,7 +151,7 @@ func (b *Builder) WriteWishList(w FlushWriter) error {
 	}
 
 	// Create a shuffler using the above consumeFunc and push the SyncInfo's chunk infos through it.
-	// For every chunkInfo leaving the shuffler (in shuffled order), the consumeFunc
+	// For every ChunkInfo leaving the shuffler (in shuffled order), the consumeFunc
 	// writes a bit into the wishlist.
 	shuffler := shuffle.NewStreamShuffler(b.syncinf.Perm, emptyChunkInfo, consumeFunc)
 	nChunks := len(b.syncinf.Chunks)

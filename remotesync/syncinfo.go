@@ -28,7 +28,7 @@ import (
 // Struct SyncInfo contains information which two CAFS instances have to agree on before
 // transmitting a file.
 type SyncInfo struct {
-	Chunks []chunkInfo         // hashes and sizes of chunks
+	Chunks []ChunkInfo         // hashes and sizes of chunks
 	Perm   shuffle.Permutation // the permutation of chunks to use when transferring
 }
 
@@ -45,7 +45,7 @@ func (s *SyncInfo) SetPermutation(perm shuffle.Permutation) {
 // Func SetChunksFromFile prepares sync information for a CAFS file.
 func (s *SyncInfo) SetChunksFromFile(file cafs.File) {
 	if !file.IsChunked() {
-		s.Chunks = append(s.Chunks[:0], chunkInfo{
+		s.Chunks = append(s.Chunks[:0], ChunkInfo{
 			Key:  file.Key(),
 			Size: intsize(file.Size()),
 		})
@@ -100,7 +100,7 @@ func (s *SyncInfo) WriteToLegacyStream(stream io.Writer) error {
 }
 
 func (s *SyncInfo) addChunk(key cafs.SKey, size int64) {
-	s.Chunks = append(s.Chunks, chunkInfo{key, intsize(size)})
+	s.Chunks = append(s.Chunks, ChunkInfo{key, intsize(size)})
 }
 
 func intsize(size int64) int {
@@ -108,4 +108,28 @@ func intsize(size int64) int {
 		panic("invalid chunk total")
 	}
 	return int(size)
+}
+
+// Applies the permutation contained within the receiver to it's own list of chunks, returning
+// a SyncInfo with a permuted list of chunks and the trivial permutation.
+// This is interesting for assistive transfers where a file is offered for retrieval while it is
+// still being retrieved from a different source. In that case, forwarding file chunks in a
+// different shuffle order than the one retrieved would lead to unnecessary delays waiting for
+// a certain chunk while others are already available.
+func (s *SyncInfo) Shuffle() *SyncInfo {
+	newChunks := make([]ChunkInfo, 0, len(s.Chunks))
+	shuffler := shuffle.NewStreamShuffler(s.Perm, nil, func(v interface{}) error {
+		if v != nil {
+			newChunks = append(newChunks, v.(ChunkInfo))
+		}
+		return nil
+	})
+	for _, c := range s.Chunks {
+		_ = shuffler.Put(c)
+	}
+	_ = shuffler.End()
+	return &SyncInfo{
+		Chunks: newChunks,
+		Perm:   shuffle.Permutation{0},
+	}
 }
