@@ -101,13 +101,21 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	chunks, err := handler.source.GetChunks()
 	if err != nil {
+		log.Printf("GetChunks() failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm, w, nil)
+	defer chunks.Dispose()
+	cb := func(bytesToTransfer, bytesTransferred int64) {
+		log.Printf("  skipped: %v transferred: %v", -bytesToTransfer, bytesTransferred)
+	}
+	log.Printf("Calling WriteChunkData")
+	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm, w, cb)
 	if err != nil {
-		log.Printf("Error in WriteChunkDate: %v", err)
+		log.Printf("Error in WriteChunkData: %v", err)
 		return
+	} else {
+		log.Printf("WriteChunkData finished")
 	}
 }
 
