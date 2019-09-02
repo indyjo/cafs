@@ -109,12 +109,11 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handler.log.Printf("  skipped: %v transferred: %v", -bytesToTransfer, bytesTransferred)
 	}
 	handler.log.Printf("Calling WriteChunkData")
+	defer handler.log.Printf("WriteChunkData finished")
 	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm, w, cb)
 	if err != nil {
 		handler.log.Printf("Error in WriteChunkData: %v", err)
 		return
-	} else {
-		handler.log.Printf("WriteChunkData finished")
 	}
 }
 
