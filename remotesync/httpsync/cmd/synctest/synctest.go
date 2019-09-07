@@ -99,7 +99,8 @@ func loadFile(storage cafs.FileStorage, path string) (err error) {
 	defer file.Dispose()
 	log.Printf("Read file: %v (%v bytes, chunked: %v, %v chunks)", path, n, file.IsChunked(), file.NumChunks())
 
-	handler := httpsync.NewFileHandlerFromFile(file, rand.Perm(256))
+	printer := log.New(os.Stderr, "", log.LstdFlags)
+	handler := httpsync.NewFileHandlerFromFile(file, rand.Perm(256)).WithPrinter(printer)
 	fileHandlers[file.Key().String()] = handler
 
 	path = fmt.Sprintf("/file/%v", file.Key().String()[:16])

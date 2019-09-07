@@ -29,6 +29,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Struct FileHandler implements the http.Handler interface and serves a file over HTTP.
@@ -116,13 +117,19 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.(http.Flusher).Flush()
 
-	cb := func(bytesToTransfer, bytesTransferred int64) {
-		handler.log.Printf("  skipped: %v transferred: %v", -bytesToTransfer, bytesTransferred)
+	var bytesSkipped, bytesTransferred int64
+	cb := func(toTransfer, transferred int64) {
+		bytesSkipped = -toTransfer
+		bytesTransferred = transferred
 	}
 	handler.log.Printf("Calling WriteChunkData")
-	defer handler.log.Printf("WriteChunkData finished")
+	start := time.Now()
 	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm,
 		remotesync.SimpleFlushWriter{w, w.(http.Flusher)}, cb)
+	duration := time.Since(start)
+	speed := float64(bytesTransferred) / duration.Seconds()
+	handler.log.Printf("WriteChunkData took %v. KBytes transferred: %v (%.2f/s) skipped: %v",
+		duration, bytesTransferred>>10, speed/1024, bytesSkipped>>10)
 	if err != nil {
 		handler.log.Printf("Error in WriteChunkData: %v", err)
 		return
