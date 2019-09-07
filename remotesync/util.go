@@ -48,11 +48,11 @@ func (s SimpleFlushWriter) Flush() {
 
 // An implementation of FlushWriter whose Flush() function is a nop.
 type NopFlushWriter struct {
-	w io.Writer
+	W io.Writer
 }
 
 func (f NopFlushWriter) Write(p []byte) (n int, err error) {
-	return f.w.Write(p)
+	return f.W.Write(p)
 }
 
 func (f NopFlushWriter) Flush() {

@@ -163,7 +163,7 @@ func SyncFrom(ctx context.Context, storage cafs.FileStorage, client *http.Client
 	req.Header.Set("Connection", "close")
 
 	go func() {
-		if err := builder.WriteWishList(nopFlushWriter{pw}); err != nil {
+		if err := builder.WriteWishList(remotesync.NopFlushWriter{pw}); err != nil {
 			_ = pw.CloseWithError(fmt.Errorf("error in WriteWishList: %v", err))
 			return
 		}
