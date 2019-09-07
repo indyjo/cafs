@@ -57,17 +57,6 @@ func check(t *testing.T, msg string, err error) {
 	}
 }
 
-type flushWriter struct {
-	w io.Writer
-}
-
-func (w flushWriter) Write(buf []byte) (int, error) {
-	return w.w.Write(buf)
-}
-
-func (w flushWriter) Flush() {
-}
-
 func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma float64, nBlocks int, perm shuffle.Permutation) {
 	t.Logf("Testing with params: p=%f, nBlocks=%d, permSize=%d", p, nBlocks, len(perm))
 	tempA := storeA.Create(fmt.Sprintf("Data A(%.2f,%d)", p, nBlocks))
@@ -96,7 +85,7 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 	pipeReader2, pipeWriter2 := io.Pipe()
 
 	go func() {
-		if err := builder.WriteWishList(flushWriter{pipeWriter1}); err != nil {
+		if err := builder.WriteWishList(NopFlushWriter{pipeWriter1}); err != nil {
 			_ = pipeWriter1.CloseWithError(fmt.Errorf("Error generating wishlist: %v", err))
 		} else {
 			_ = pipeWriter1.Close()
@@ -106,7 +95,7 @@ func testWithParams(t *testing.T, storeA, storeB cafs.BoundedStorage, p, sigma f
 	go func() {
 		chunks := ChunksOfFile(fileA)
 		defer chunks.Dispose()
-		if err := WriteChunkData(chunks, fileA.Size(), bufio.NewReader(pipeReader1), perm, pipeWriter2, nil); err != nil {
+		if err := WriteChunkData(chunks, fileA.Size(), bufio.NewReader(pipeReader1), perm, NopFlushWriter{pipeWriter2}, nil); err != nil {
 			_ = pipeWriter2.CloseWithError(fmt.Errorf("Error sending requested chunk data: %v", err))
 		} else {
 			_ = pipeWriter2.Close()

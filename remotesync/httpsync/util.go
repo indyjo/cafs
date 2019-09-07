@@ -112,15 +112,3 @@ func (s *syncInfoChunks) NextChunk() (cafs.File, error) {
 func (s *syncInfoChunks) Dispose() {
 	close(s.done)
 }
-
-// An implementation of FlushWriter whose Flush() function is a nop.
-type nopFlushWriter struct {
-	w io.Writer
-}
-
-func (f nopFlushWriter) Write(p []byte) (n int, err error) {
-	return f.w.Write(p)
-}
-
-func (f nopFlushWriter) Flush() {
-}
