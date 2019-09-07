@@ -113,6 +113,7 @@ func (s *syncInfoChunks) Dispose() {
 	close(s.done)
 }
 
+// An implementation of FlushWriter whose Flush() function is a nop.
 type nopFlushWriter struct {
 	w io.Writer
 }

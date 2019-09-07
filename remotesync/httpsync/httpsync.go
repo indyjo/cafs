@@ -98,6 +98,13 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Require a Connection: close header that will trick Go's HTTP server into allowing bi-directional streams.
+	if r.Header.Get("Connection") != "close" {
+		http.Error(w, "Connection: close required", http.StatusBadRequest)
+		return
+	}
+
 	chunks, err := handler.source.GetChunks()
 	if err != nil {
 		handler.log.Printf("GetChunks() failed: %v", err)
@@ -105,12 +112,17 @@ func (handler *FileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer chunks.Dispose()
+
+	w.WriteHeader(http.StatusOK)
+	w.(http.Flusher).Flush()
+
 	cb := func(bytesToTransfer, bytesTransferred int64) {
 		handler.log.Printf("  skipped: %v transferred: %v", -bytesToTransfer, bytesTransferred)
 	}
 	handler.log.Printf("Calling WriteChunkData")
 	defer handler.log.Printf("WriteChunkData finished")
-	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm, w, cb)
+	err = remotesync.WriteChunkData(chunks, 0, bufio.NewReader(r.Body), handler.syncinfo.Perm,
+		remotesync.SimpleFlushWriter{w, w.(http.Flusher)}, cb)
 	if err != nil {
 		handler.log.Printf("Error in WriteChunkData: %v", err)
 		return
@@ -146,6 +158,9 @@ func SyncFrom(ctx context.Context, storage cafs.FileStorage, client *http.Client
 
 	// Enable cancelation
 	req = req.WithContext(ctx)
+
+	// Trick Go's HTTP server implementation into allowing bi-directional data flow
+	req.Header.Set("Connection", "close")
 
 	go func() {
 		if err := builder.WriteWishList(nopFlushWriter{pw}); err != nil {

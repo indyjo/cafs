@@ -137,7 +137,7 @@ func forEachChunk(chunks Chunks, r io.ByteReader, perm shuffle.Permutation, f fu
 // Writes a stream of chunk length / data pairs, permuted by a shuffler corresponding to `perm`,
 // into an io.Writer, based on the chunks of a file and a matching permuted wishlist of requested chunks,
 // read from `r`.
-func WriteChunkData(chunks Chunks, bytesToTransfer int64, r io.ByteReader, perm shuffle.Permutation, w io.Writer, cb TransferStatusCallback) error {
+func WriteChunkData(chunks Chunks, bytesToTransfer int64, r io.ByteReader, perm shuffle.Permutation, w FlushWriter, cb TransferStatusCallback) error {
 	if LoggingEnabled {
 		log.Printf("Sender: Begin WriteChunkData")
 		defer log.Printf("Sender: End WriteChunkData")
@@ -162,6 +162,7 @@ func WriteChunkData(chunks Chunks, bytesToTransfer int64, r io.ByteReader, perm 
 				_ = r.Close()
 				return err
 			} else {
+				w.Flush()
 				bytesTransferred += n
 			}
 			if err := r.Close(); err != nil {

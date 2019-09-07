@@ -102,7 +102,7 @@ func loadFile(storage cafs.FileStorage, path string) (err error) {
 	handler := httpsync.NewFileHandlerFromFile(file, rand.Perm(256))
 	fileHandlers[file.Key().String()] = handler
 
-	path = fmt.Sprintf("/file/%v", file.Key())
+	path = fmt.Sprintf("/file/%v", file.Key().String()[:16])
 	http.Handle(path, handler)
 	log.Printf("  serving under %v", path)
 	return

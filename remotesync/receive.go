@@ -30,12 +30,6 @@ import (
 var ErrDisposed = errors.New("disposed")
 var ErrUnexpectedChunk = errors.New("unexpected chunk")
 
-// Interface FlushWriter acts like an io.Writer with an additional Flush method.
-type FlushWriter interface {
-	io.Writer
-	Flush()
-}
-
 // Used by receiver to memorize information about a chunk in the time window between
 // putting it into the wishlist and receiving the actual chunk data.
 type memo struct {
